@@ -1,0 +1,58 @@
+# lightning.pytorch==2.0.0
+name: my_experiment
+version: my_version
+
+seed_everything: 42
+trainer:
+  accelerator: gpu
+  precision: 16-mixed
+  max_epochs: 300
+  plugins:
+    - AsyncCheckpointIO
+
+model:
+  class_path: DefaultModel
+  init_args:
+    num_classes: 35
+    net:
+      class_path: SimpleNet
+      init_args:
+        num_classes: ${model.init_args.num_classes}
+
+    criterion:
+      class_path: CrossEntropyLoss
+
+    # log visualization of total 100 samples per epoch
+    vis_per_batch: 10 # log visualization of 10 samples per batch
+    vis_batches: 10 # log visualization of 10 batches per epoch
+
+data:
+  class_path: SpeechCommandsDataModule
+  init_args:
+    root: data
+    batch_size: 256
+    transforms:
+      class_path: DefaultTransforms
+    num_workers: 8
+
+optimizer:
+  class_path: Adam
+  init_args:
+    lr: 0.01
+    weight_decay: 1e-4
+
+lr_scheduler:
+  class_path: CosineAnnealingLR
+  init_args:
+    T_max: ${trainer.max_epochs}
+
+early_stopping:
+  monitor: val/acc
+  patience: 1000
+  mode: max
+
+model_ckpt:
+  # dirpath: "gs://bucket-name[/extra-path]"
+  monitor: val_acc
+  mode: max
+  filename: "best-{epoch:02d}-{val_acc:.4f}"

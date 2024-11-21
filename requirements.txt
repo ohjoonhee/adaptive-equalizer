@@ -1,0 +1,27 @@
+lightning
+scikit-learn
+typing_extensions  # NECESSARY
+
+# jsonargparse[signatures]
+jsonargparse
+typeshed-client
+docstring-parser
+
+# variable interpolation in configs
+omegaconf
+
+# optional libs.
+# torchinfo==1.7.2
+
+# audio libs.
+torchaudio
+librosa
+
+# vision libs.
+# albumentations
+# opencv-python-headless
+# torchvision
+
+# logging
+wandb
+tensorboardX
