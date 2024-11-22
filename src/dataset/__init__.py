@@ -1,1 +1,1 @@
-from . import speech_commands
+from . import gtzan

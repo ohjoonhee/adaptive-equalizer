@@ -1,5 +1,7 @@
 from typing import Optional
 
+import matplotlib.pyplot as plt
+
 import torch
 from torch import nn
 
@@ -32,8 +34,6 @@ class DefaultModel(L.LightningModule):
         self.vis_batches = vis_batches if vis_batches is not None else float("inf")
         self.num_classes = num_classes
 
-        self.accuracy = Accuracy(task="multiclass", num_classes=self.num_classes)
-
     def forward(self, x):
         return self.net(x)
 
@@ -49,52 +49,50 @@ class DefaultModel(L.LightningModule):
                 self.ID2CLS = list(range(self.num_classes))
 
     def training_step(self, batch, batch_idx):
-        waveforms, labels = batch
-        pred = self(waveforms)
+        specs, labels = batch
+        preds = self(specs.unsqueeze(1))
 
-        loss = self.criterion(pred, labels)
-        self.log("train_loss", loss.item())
+        loss = self.criterion(preds, labels)
+        self.log("train/loss", loss.item())
 
         return loss
 
     def on_validation_epoch_start(self) -> None:
         if self.vis_per_batch:
-            self.table = wandb.Table(columns=["audio", "label", "pred"])
+            # self.table = wandb.Table(columns=["audio", "label", "pred"])
+            self.vis_examples = []
 
     def validation_step(self, batch, batch_idx):
-        waveforms, labels = batch
-        pred = self(waveforms)
+        specs, labels = batch
+        preds = self(specs.unsqueeze(1))
 
-        loss = self.criterion(pred, labels)
-        acc = self.accuracy(pred, labels)
+        loss = self.criterion(preds, labels)
 
         self.log_dict(
             {
-                "val_loss": loss.item(),
-                "val_acc": acc,
+                "val/loss": loss.item(),
             },
             on_epoch=True,
             on_step=False,
         )
 
         if self.vis_per_batch and batch_idx < self.vis_batches:
-            self.visualize_preds(waveforms, labels, pred)
+            self.visualize_preds(specs, labels, preds)
 
-    def visualize_preds(self, waveforms, labels, pred):
-        for i in range(min(len(waveforms), self.vis_per_batch)):
-            self.table.add_data(
-                wandb.Audio(waveforms[i].squeeze().cpu().numpy(), sample_rate=16000),
-                self.ID2CLS[labels[i].item()],
-                self.ID2CLS[pred[i].argmax(-1).item()],
-            )
+    def visualize_preds(self, specs, labels, pred):
+        for i in range(min(len(specs), self.vis_per_batch)):
+            plt.plot(labels[i].cpu().numpy(), label="label")
+            plt.plot(pred[i].cpu().numpy(), label="pred")
+            self.vis_examples.append(wandb.Image(plt))
+            plt.close()
 
     def on_validation_epoch_end(self) -> None:
         if self.vis_per_batch:
-            self.logger.experiment.log({"val_samples": self.table})
+            self.logger.experiment.log({"val/samples": self.vis_examples})
 
-    def test_step(self, batch, batch_idx):
-        img, labels = batch
-        pred = self(img)
+    # def test_step(self, batch, batch_idx):
+    #     img, labels = batch
+    #     pred = self(img)
 
-        acc = self.accuracy(pred, labels)
-        self.log("test_acc", acc)
+    #     acc = self.accuracy(pred, labels)
+    #     self.log("test_acc", acc)
