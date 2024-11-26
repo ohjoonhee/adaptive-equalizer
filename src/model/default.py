@@ -1,4 +1,5 @@
 from typing import Optional
+from dataclasses import dataclass, asdict
 
 import matplotlib.pyplot as plt
 
@@ -16,13 +17,24 @@ finally:
     pass
 
 
+@dataclass
+class STFTConfig:
+    """Dataclass containing STFT params."""
+
+    n_fft: int = 2048
+    hop_length: int = 512
+    win_length: int = 2048
+    center: bool = True
+    window: str = "hann_window"
+
+
 class DefaultModel(L.LightningModule):
     def __init__(
         self,
         net: nn.Module,
         criterion: nn.Module,
-        num_classes: int,
         vis_per_batch: int,
+        stft_params: STFTConfig,
         vis_batches: Optional[int] = None,
     ) -> None:
         super().__init__()
@@ -30,26 +42,63 @@ class DefaultModel(L.LightningModule):
 
         self.net = net
         self.criterion = criterion
+
+        # For visualization
         self.vis_per_batch = vis_per_batch
         self.vis_batches = vis_batches if vis_batches is not None else float("inf")
-        self.num_classes = num_classes
+
+        # STFT params
+        win = self.get_window(stft_params.window, stft_params.win_length)
+        self.register_buffer("window", win, persistent=False)
+        self.window: torch.Tensor
+        self.stft_params = asdict(stft_params)
+        self.stft_params.pop("window")
+
+    def get_window(self, window, win_length):
+        if window is None or window == "hann_window":
+            window_tensor = torch.hann_window(window_length=win_length, periodic=False)
+        if window == "hamming_window":
+            window_tensor = torch.hamming_window(
+                window_length=win_length, periodic=False
+            )
+        return window_tensor
 
     def forward(self, x):
         return self.net(x)
+
+    def _apply_eq(self, spec, eq):
+        eq = torch.pow(10, eq / 20)
+        return spec * eq.unsqueeze(-1)
+
+    def on_after_batch_transfer(
+        self, batch: torch.Any, dataloader_idx: int
+    ) -> torch.Any:
+        clean_audio = batch["clean_audio"]
+        eq = batch["label"]
+        clean_spec = torch.stft(
+            clean_audio, window=self.window, return_complex=True, **self.stft_params
+        )
+        noisy_spec = self._apply_eq(clean_spec, eq)
+        noisy_audio = torch.istft(
+            noisy_spec, window=self.window, return_complex=False, **self.stft_params
+        )
+
+        batch["clean_spec"] = clean_spec
+        batch["noisy_spec"] = noisy_spec
+        batch["noisy_audio"] = noisy_audio
+        batch["label"] = -eq / 20
+
+        return batch
 
     def on_fit_start(self) -> None:
         # Note that self.logger is set by the Trainer.fit()
         # self.logger is None at self.__init__
         self.is_wandb = isinstance(self.logger, WandbLogger)
         self.vis_per_batch = self.vis_per_batch if self.is_wandb else 0
-        if self.vis_per_batch:
-            if hasattr(self.trainer.datamodule, "ID2CLS"):
-                self.ID2CLS = self.trainer.datamodule.ID2CLS
-            else:
-                self.ID2CLS = list(range(self.num_classes))
 
     def training_step(self, batch, batch_idx):
         specs = batch["noisy_spec"]
+        specs = torch.abs(specs).float()
         labels = batch["label"]
         preds = self(specs.unsqueeze(1))
 
@@ -65,6 +114,7 @@ class DefaultModel(L.LightningModule):
 
     def validation_step(self, batch, batch_idx):
         specs = batch["noisy_spec"]
+        specs = torch.abs(specs).float()
         labels = batch["label"]
         preds = self(specs.unsqueeze(1))
 
