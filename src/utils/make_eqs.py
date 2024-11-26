@@ -28,12 +28,12 @@ def make_random_eq(shape):
     filter = random_walk(x)
     filter = running_mean(filter, 15)
     filter = rescale(filter, -20, 2)
-    filter = db2mag(filter)
+    # filter = db2mag(filter)
     return filter
 
 
 if __name__ == "__main__":
-    eq_path = "data/random_walk_eqs"
+    eq_path = "data/random_walk_eqs_db"
 
     for i in range(1010):
         eq = make_random_eq(1025)
