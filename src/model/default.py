@@ -49,7 +49,8 @@ class DefaultModel(L.LightningModule):
                 self.ID2CLS = list(range(self.num_classes))
 
     def training_step(self, batch, batch_idx):
-        specs, labels = batch
+        specs = batch["noisy_spec"]
+        labels = batch["label"]
         preds = self(specs.unsqueeze(1))
 
         loss = self.criterion(preds, labels)
@@ -59,11 +60,12 @@ class DefaultModel(L.LightningModule):
 
     def on_validation_epoch_start(self) -> None:
         if self.vis_per_batch:
-            # self.table = wandb.Table(columns=["audio", "label", "pred"])
-            self.vis_examples = []
+            self.table = wandb.Table(columns=["clean_audio", "noisy_audio", "pred"])
+            # self.vis_examples = []
 
     def validation_step(self, batch, batch_idx):
-        specs, labels = batch
+        specs = batch["noisy_spec"]
+        labels = batch["label"]
         preds = self(specs.unsqueeze(1))
 
         loss = self.criterion(preds, labels)
@@ -77,18 +79,24 @@ class DefaultModel(L.LightningModule):
         )
 
         if self.vis_per_batch and batch_idx < self.vis_batches:
-            self.visualize_preds(specs, labels, preds)
+            self.visualize_preds(
+                specs, labels, preds, batch["clean_audio"], batch["noisy_audio"]
+            )
 
-    def visualize_preds(self, specs, labels, pred):
+    def visualize_preds(self, specs, labels, pred, clean_audio, noisy_audio):
         for i in range(min(len(specs), self.vis_per_batch)):
             plt.plot(labels[i].cpu().numpy(), label="label")
             plt.plot(pred[i].cpu().numpy(), label="pred")
-            self.vis_examples.append(wandb.Image(plt))
+            self.table.add_data(
+                wandb.Audio(clean_audio[i].squeeze().cpu().numpy(), sample_rate=22050),
+                wandb.Audio(noisy_audio[i].squeeze().cpu().numpy(), sample_rate=22050),
+                wandb.Image(plt),
+            )
             plt.close()
 
     def on_validation_epoch_end(self) -> None:
         if self.vis_per_batch:
-            self.logger.experiment.log({"val/samples": self.vis_examples})
+            self.logger.experiment.log({"val/samples": self.table})
 
     # def test_step(self, batch, batch_idx):
     #     img, labels = batch
