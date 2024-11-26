@@ -1,27 +1,25 @@
 # lightning.pytorch==2.0.0
-name: dev_audio_log
-version: v4
+name: pred-clean-audio_attenuate-denoiser
+version: v0
 
 seed_everything: 42
 trainer:
   accelerator: gpu
-  precision: 16-mixed
+  # precision: 16-mixed
   max_epochs: 300
   plugins:
     - AsyncCheckpointIO
   # profiler:
-  #   class_path: SimpleProfiler
+  #   class_path: AdvancedProfiler
   #   init_args:
   #     filename: profile.txt
 
 model:
-  class_path: DefaultModel
+  class_path: PredictCleanAudioModel
   init_args:
     num_classes: 10 # not used in this example
     net:
-      class_path: net.eff.EfficientNet
-      # init_args:
-      #   num_classes: ${model.init_args.num_classes}
+      class_path: net.attenuate.Denoiser
 
     criterion:
       class_path: MSELoss
@@ -34,7 +32,7 @@ data:
   class_path: GTZANDataModule
   init_args:
     root: data
-    batch_size: 64
+    batch_size: 32
     # transforms:
     #   class_path: DefaultTransforms
     num_workers: 8

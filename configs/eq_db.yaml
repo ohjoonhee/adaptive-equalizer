@@ -1,6 +1,6 @@
 # lightning.pytorch==2.0.0
-name: dev_audio_log
-version: v4
+name: eq-db_attenuate
+version: v6
 
 seed_everything: 42
 trainer:
@@ -15,13 +15,16 @@ trainer:
   #     filename: profile.txt
 
 model:
-  class_path: DefaultModel
+  class_path: PredictInterpolatedEQModel
   init_args:
     num_classes: 10 # not used in this example
     net:
-      class_path: net.eff.EfficientNet
-      # init_args:
-      #   num_classes: ${model.init_args.num_classes}
+      # class_path: net.eff.EfficientNet
+      class_path: net.attenuate.Attenuate
+      init_args:
+        # pretrained: false
+        channels: [16, 32, 64, 96, 128, 256, 512, 1025]
+        resample_factors: [4, 4, 2, 2, 2, 2, 1, 1]
 
     criterion:
       class_path: MSELoss
@@ -38,6 +41,7 @@ data:
     # transforms:
     #   class_path: DefaultTransforms
     num_workers: 8
+    val_eq_dir: random_walk_eqs_db
 
 optimizer:
   class_path: AdamW
