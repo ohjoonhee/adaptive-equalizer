@@ -24,11 +24,22 @@ def db2mag(x):
 
 
 def make_random_eq(shape):
+    """
+    Generates a random db-scaled equalizer filter.
+
+    This function creates a random equalizer filter by performing a random walk,
+    applying a running mean, and rescaling the values.
+
+    Args:
+        shape (int): The length of the equalizer filter.
+
+    Returns:
+        numpy.ndarray: The generated equalizer filter.
+    """
     x = np.linspace(0, shape, shape)
     filter = random_walk(x)
     filter = running_mean(filter, 15)
     filter = rescale(filter, -20, 2)
-    # filter = db2mag(filter)
     return filter
 
 
