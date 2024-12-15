@@ -4,9 +4,9 @@ from torchvision.models import efficientnet_b0
 
 
 class EfficientNet(nn.Module):
-    def __init__(self, output_dim: int = 1025) -> None:
+    def __init__(self, output_dim: int = 1025, pretrained: bool = True) -> None:
         super(EfficientNet, self).__init__()
-        self.backbone = efficientnet_b0(pretrained=True)
+        self.backbone = efficientnet_b0(pretrained=pretrained)
         self.backbone.features[0][0] = nn.Conv2d(
             1, 32, kernel_size=(3, 3), stride=(2, 2), bias=False
         )

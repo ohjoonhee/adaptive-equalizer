@@ -2,6 +2,7 @@ from typing import Optional
 from dataclasses import dataclass, asdict
 
 import matplotlib.pyplot as plt
+import numpy as np
 
 import torch
 from torch import nn
@@ -9,7 +10,11 @@ from torch import nn
 import lightning as L
 from lightning.pytorch.loggers import WandbLogger
 
-from torchmetrics import Accuracy
+from torchmetrics.audio import (
+    SignalDistortionRatio,
+    ScaleInvariantSignalDistortionRatio,
+)
+from torchmetrics import MeanAbsoluteError
 
 try:
     import wandb
@@ -33,8 +38,10 @@ class DefaultModel(L.LightningModule):
         self,
         net: nn.Module,
         criterion: nn.Module,
-        vis_per_batch: int,
         stft_params: STFTConfig,
+        sr: Optional[int] = None,
+        compression: Optional[float] = None,
+        vis_per_batch: int = 0,
         vis_batches: Optional[int] = None,
     ) -> None:
         super().__init__()
@@ -42,6 +49,13 @@ class DefaultModel(L.LightningModule):
 
         self.net = net
         self.criterion = criterion
+        self.sr = sr
+        self.compression = compression if compression is not None else 1
+
+        # for validation metrics
+        self.l1_spec = MeanAbsoluteError()
+        self.sdr = SignalDistortionRatio()
+        self.si_sdr = ScaleInvariantSignalDistortionRatio()
 
         # For visualization
         self.vis_per_batch = vis_per_batch
@@ -66,23 +80,58 @@ class DefaultModel(L.LightningModule):
     def forward(self, x):
         return self.net(x)
 
-    def _apply_eq(self, spec, eq):
+    def apply_eq(self, spec, eq):
         eq = torch.pow(10, eq / 20)
+        return spec * eq.unsqueeze(-1)
+
+    def apply_inv_eq(self, spec, preds):
+        # eq = eq * 20
+        # eq = torch.pow(10, -eq / 20)
+        eq = torch.pow(10, preds)
         return spec * eq.unsqueeze(-1)
 
     def on_after_batch_transfer(
         self, batch: torch.Any, dataloader_idx: int
     ) -> torch.Any:
         clean_audio = batch["clean_audio"]
+
+        # seg_len = 66150
+        seg_len = self.sr * 3
+        segs = []
+        for i in range(8):
+            segs.append(clean_audio[..., i * seg_len : (i + 1) * seg_len])
+        clean_audio = torch.cat(segs, dim=0)
+        if self.trainer.training:
+            perm = torch.randperm(clean_audio.size(0))
+            clean_audio = clean_audio[perm]
+
         eq = batch["label"]
+        eq = eq.repeat(8, 1)
+
+        # log scale x-axis eq data to linear scale x-axis
+        # eq = interp(
+        #     torch.linspace(1, eq.size(-1), eq.size(-1), device=eq.device)
+        #     .unsqueeze(0)
+        #     .repeat(eq.size(0), 1),
+        #     torch.logspace(0, np.log10(eq.size(-1)), eq.size(-1), device=eq.device)
+        #     .unsqueeze(0)
+        #     .repeat(eq.size(0), 1),
+        #     eq,
+        # )
+
+        if self.trainer.training:
+            perm = torch.randperm(clean_audio.size(0))
+            eq = eq[perm]
+
         clean_spec = torch.stft(
             clean_audio, window=self.window, return_complex=True, **self.stft_params
         )
-        noisy_spec = self._apply_eq(clean_spec, eq)
+        noisy_spec = self.apply_eq(clean_spec, eq)
         noisy_audio = torch.istft(
             noisy_spec, window=self.window, return_complex=False, **self.stft_params
         )
 
+        batch["clean_audio"] = clean_audio
         batch["clean_spec"] = clean_spec
         batch["noisy_spec"] = noisy_spec
         batch["noisy_audio"] = noisy_audio
@@ -96,33 +145,80 @@ class DefaultModel(L.LightningModule):
         self.is_wandb = isinstance(self.logger, WandbLogger)
         self.vis_per_batch = self.vis_per_batch if self.is_wandb else 0
 
+    def on_train_epoch_start(self) -> None:
+        if self.trainer.current_epoch != 0:
+            return
+        if self.vis_per_batch:
+            self.train_table = wandb.Table(
+                columns=["clean_audio", "noisy_audio", "recon_audio", "pred"]
+            )
+
     def training_step(self, batch, batch_idx):
+        if (
+            self.current_epoch == 0
+            and self.vis_per_batch
+            and batch_idx < self.vis_batches
+        ):
+            self.visualize_train_batches(
+                batch["noisy_spec"],
+                batch["label"],
+                torch.zeros_like(batch["label"]),
+                batch["clean_audio"],
+                batch["noisy_audio"],
+                batch["noisy_audio"],
+            )
+
         specs = batch["noisy_spec"]
         specs = torch.abs(specs).float()
+        specs = specs**self.compression
         labels = batch["label"]
         preds = self(specs.unsqueeze(1))
 
         loss = self.criterion(preds, labels)
-        self.log("train/loss", loss.item())
+        self.log("train/loss", loss.item(), prog_bar=True)
 
         return loss
 
+    def on_train_epoch_end(self) -> None:
+        if self.trainer.current_epoch != 0:
+            return
+        if self.vis_per_batch:
+            self.logger.experiment.log({"train/samples": self.train_table})
+
     def on_validation_epoch_start(self) -> None:
         if self.vis_per_batch:
-            self.table = wandb.Table(columns=["clean_audio", "noisy_audio", "pred"])
-            # self.vis_examples = []
+            self.table = wandb.Table(
+                columns=["clean_audio", "noisy_audio", "recon_audio", "pred"]
+            )
 
     def validation_step(self, batch, batch_idx):
         specs = batch["noisy_spec"]
         specs = torch.abs(specs).float()
+        specs = specs**self.compression
         labels = batch["label"]
         preds = self(specs.unsqueeze(1))
 
         loss = self.criterion(preds, labels)
 
+        # reconstruct audio
+        recon_specs = self.apply_inv_eq(batch["noisy_spec"], preds)
+        recon_audio = torch.istft(
+            recon_specs, window=self.window, return_complex=False, **self.stft_params
+        )
+
+        # l1 spectrum metric
+        self.l1_spec(torch.abs(recon_specs).float(), batch["clean_spec"])
+
+        # Compute SDR and SI-SDR
+        self.sdr(batch["clean_audio"][..., : recon_audio.shape[-1]], recon_audio)
+        self.si_sdr(batch["clean_audio"][..., : recon_audio.shape[-1]], recon_audio)
+
         self.log_dict(
             {
                 "val/loss": loss.item(),
+                "val/sdr": self.sdr,
+                "val/si-sdr": self.si_sdr,
+                "val/l1_spec": self.l1_spec,
             },
             on_epoch=True,
             on_step=False,
@@ -130,16 +226,60 @@ class DefaultModel(L.LightningModule):
 
         if self.vis_per_batch and batch_idx < self.vis_batches:
             self.visualize_preds(
-                specs, labels, preds, batch["clean_audio"], batch["noisy_audio"]
+                specs,
+                labels,
+                preds,
+                batch["clean_audio"],
+                batch["noisy_audio"],
+                recon_audio,
             )
 
-    def visualize_preds(self, specs, labels, pred, clean_audio, noisy_audio):
-        for i in range(min(len(specs), self.vis_per_batch)):
-            plt.plot(labels[i].cpu().numpy(), label="label")
-            plt.plot(pred[i].cpu().numpy(), label="pred")
+    def visualize_preds(
+        self, specs, labels, pred, clean_audio, noisy_audio, recon_audio
+    ):
+        x_logscale = np.logspace(0, np.log10(self.sr / 2), labels.size(-1))
+        for i in range(min(len(clean_audio), self.vis_per_batch)):
+            plt.plot(x_logscale, labels[i].cpu().numpy() * 20, label="label")
+            plt.plot(x_logscale, pred[i].cpu().numpy() * 20, label="pred")
+            plt.ylabel("Magnitude (dB)")
+            plt.xlabel("Frequency (Hz)")
+            plt.xscale("log")
+            plt.legend()
             self.table.add_data(
-                wandb.Audio(clean_audio[i].squeeze().cpu().numpy(), sample_rate=22050),
-                wandb.Audio(noisy_audio[i].squeeze().cpu().numpy(), sample_rate=22050),
+                wandb.Audio(
+                    clean_audio[i].squeeze().cpu().numpy(), sample_rate=self.sr
+                ),
+                wandb.Audio(
+                    noisy_audio[i].squeeze().cpu().numpy(), sample_rate=self.sr
+                ),
+                wandb.Audio(
+                    recon_audio[i].squeeze().cpu().numpy(), sample_rate=self.sr
+                ),
+                wandb.Image(plt),
+            )
+            plt.close()
+
+    def visualize_train_batches(
+        self, specs, labels, pred, clean_audio, noisy_audio, recon_audio
+    ):
+        x_logscale = np.logspace(0, np.log10(self.sr / 2), labels.size(-1))
+        for i in range(min(len(clean_audio), self.vis_per_batch)):
+            plt.plot(x_logscale, labels[i].cpu().numpy() * 20, label="label")
+            plt.plot(x_logscale, pred[i].cpu().numpy() * 20, label="pred")
+            plt.ylabel("Magnitude (dB)")
+            plt.xlabel("Frequency (Hz)")
+            plt.xscale("log")
+            plt.legend()
+            self.train_table.add_data(
+                wandb.Audio(
+                    clean_audio[i].squeeze().cpu().numpy(), sample_rate=self.sr
+                ),
+                wandb.Audio(
+                    noisy_audio[i].squeeze().cpu().numpy(), sample_rate=self.sr
+                ),
+                wandb.Audio(
+                    recon_audio[i].squeeze().cpu().numpy(), sample_rate=self.sr
+                ),
                 wandb.Image(plt),
             )
             plt.close()
@@ -154,3 +294,52 @@ class DefaultModel(L.LightningModule):
 
     #     acc = self.accuracy(pred, labels)
     #     self.log("test_acc", acc)
+
+
+def interp(
+    x: torch.Tensor,
+    xp: torch.Tensor,
+    fp: torch.Tensor,
+    dim: int = -1,
+    extrapolate: str = "constant",
+) -> torch.Tensor:
+    """One-dimensional linear interpolation between monotonically increasing sample
+    points, with extrapolation beyond sample points.
+
+    Returns the one-dimensional piecewise linear interpolant to a function with
+    given discrete data points :math:`(xp, fp)`, evaluated at :math:`x`.
+
+    Args:
+        x: The :math:`x`-coordinates at which to evaluate the interpolated
+            values.
+        xp: The :math:`x`-coordinates of the data points, must be increasing.
+        fp: The :math:`y`-coordinates of the data points, same shape as `xp`.
+        dim: Dimension across which to interpolate.
+        extrapolate: How to handle values outside the range of `xp`. Options are:
+            - 'linear': Extrapolate linearly beyond range of xp values.
+            - 'constant': Use the boundary value of `fp` for `x` values outside `xp`.
+
+    Returns:
+        The interpolated values, same size as `x`.
+    """
+    # Move the interpolation dimension to the last axis
+    x = x.movedim(dim, -1)
+    xp = xp.movedim(dim, -1)
+    fp = fp.movedim(dim, -1)
+
+    m = torch.diff(fp) / torch.diff(xp)  # slope
+    b = fp[..., :-1] - m * xp[..., :-1]  # offset
+    indices = torch.searchsorted(xp, x, right=False)
+
+    if extrapolate == "constant":
+        # Pad m and b to get constant values outside of xp range
+        m = torch.cat(
+            [torch.zeros_like(m)[..., :1], m, torch.zeros_like(m)[..., :1]], dim=-1
+        )
+        b = torch.cat([fp[..., :1], b, fp[..., -1:]], dim=-1)
+    else:  # extrapolate == 'linear'
+        indices = torch.clamp(indices - 1, 0, m.shape[-1] - 1)
+
+    values = m.gather(-1, indices) * x + b.gather(-1, indices)
+
+    return values.movedim(-1, dim)

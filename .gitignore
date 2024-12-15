@@ -13,6 +13,8 @@ outputs
 wandb
 lightning_logs
 logs
+*.txt
+*.pth
 
 
 # pycache
@@ -20,6 +22,10 @@ __pycache__
 
 # dummy files
 playground.py
+playground/
 
 # docker
 Dockerfile
+
+# repos
+repos

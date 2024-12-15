@@ -19,11 +19,7 @@ def rescale(x, min, max):
     return (x - np.min(x)) / (np.max(x) - np.min(x)) * (max - min) + min
 
 
-def db2mag(x):
-    return np.power(10, x / 20)
-
-
-def make_random_eq(shape):
+def make_random_eq(shape, ma_window=15, min_db=-20, max_db=2):
     """
     Generates a random db-scaled equalizer filter.
 
@@ -38,14 +34,15 @@ def make_random_eq(shape):
     """
     x = np.linspace(0, shape, shape)
     filter = random_walk(x)
-    filter = running_mean(filter, 15)
-    filter = rescale(filter, -20, 2)
+    filter = running_mean(filter, ma_window)
+    filter = rescale(filter, min_db, max_db)
     return filter
 
 
 if __name__ == "__main__":
-    eq_path = "data/random_walk_eqs_db"
+    # eq_path = "data/random_walk_eqs_db"
+    eq_path = "/mnt/ssd/datasets/fma_medium/random_walk_eqs_db"
 
-    for i in range(1010):
+    for i in range(6000):
         eq = make_random_eq(1025)
-        np.save(osp.join(eq_path, f"{i:05d}.npy"), eq)
+        np.save(osp.join(eq_path, f"{i:06d}.npy"), eq)

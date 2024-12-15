@@ -1,0 +1,98 @@
+# lightning.pytorch==2.0.0
+name: gtzan_ssamba_lr=1e-3_fp32
+version: v2
+
+seed_everything: 42
+trainer:
+  accelerator: gpu
+  # precision: 32
+  max_epochs: 300
+  deterministic: true
+  plugins:
+    - AsyncCheckpointIO
+  # profiler:
+  #   class_path: SimpleProfiler
+  #   init_args:
+  #     filename: profile
+
+model:
+  class_path: DefaultModel
+  init_args:
+    net:
+      class_path: net.ssamba.AMBAModel
+      init_args:
+        input_fdim: 1025
+        input_tdim: 130
+        fshape: 16
+        tshape: 16
+        fstride: 10
+        tstride: 10
+        pretrain_stage: false
+        model_size: "tiny"
+        load_pretrained_mdl_path: "ssamba_tiny_400.pth"
+        label_dim: 1025
+        vision_mamba_config:
+          img_size: [130, 1025]
+          embed_dim: 192
+
+    stft_params:
+      n_fft: 2048
+      hop_length: 512
+      win_length: 2048
+      center: true
+      window: hann_window
+
+    sr: 22050
+    compression: 0.3
+
+    criterion:
+      class_path: MSELoss
+
+    # log visualization of total 100 samples per epoch
+    vis_per_batch: 10 # log visualization of 10 samples per batch
+    vis_batches: 10 # log visualization of 10 batches per epoch
+
+data:
+  # class_path: FMADataModule
+  # init_args:
+  #   root: /mnt/ssd/datasets/fma_small_wav_22k_mono
+  #   batch_size: 4
+  #   num_workers: 8
+  #   sr: ${model.init_args.sr}
+  #   metadata_path: /mnt/ssd/datasets/fma_metadata
+  #   subset: small
+  #   val_eq_dir: random_walk_eqs_db
+  # transforms:
+  #   class_path: DefaultTransforms
+  class_path: GTZANDataModule
+  init_args:
+    root: data
+    batch_size: 4
+    # transforms:
+    #   class_path: DefaultTransforms
+    num_workers: 16
+    val_eq_dir: random_walk_eqs_db
+    audio_cache_dir: null
+
+optimizer:
+  class_path: AdamW
+  init_args:
+    lr: 1e-3
+    weight_decay: 1e-5
+
+lr_scheduler:
+  class_path: CosineAnnealingLR
+  init_args:
+    T_max: ${trainer.max_epochs}
+
+early_stopping:
+  monitor: val/acc
+  patience: 1000
+  mode: max
+
+model_ckpt:
+  # dirpath: "gs://bucket-name[/extra-path]"
+  monitor: val/loss
+  mode: min
+  auto_insert_metric_name: false
+  filename: "best-epoch={epoch:02d}-val_loss={val/loss:.4f}"

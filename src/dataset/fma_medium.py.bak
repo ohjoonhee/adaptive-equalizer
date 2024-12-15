@@ -5,6 +5,7 @@ from collections import namedtuple
 
 import os
 import os.path as osp
+import glob
 
 import librosa
 import numpy as np
@@ -23,88 +24,52 @@ from utils.make_eqs import make_random_eq
 path_item = namedtuple("path_item", ["audio_path", "eq_path"])
 
 
-class GTZANSpec(Dataset):
+class FMAMiddle(Dataset):
     def __init__(
         self,
         root: str,
         subset: Optional[str] = None,
-        audio_cache_dir: str = "segments_3sec",
         val_eq_dir: str = "random_walk_eqs_db",
         eq_shape: int = 1025,  # FIXME: Hardcoded and type is limited to int
+        sr: Optional[int] = None,
     ) -> None:
         super().__init__()
         self.root = root
         self.subset = subset
-        self.audio_cache_dir = audio_cache_dir
         self.eq_shape = eq_shape
         self.val_eq_dir = val_eq_dir
+        self.sr = sr
 
         self.paths = self.load_data(subset)
 
     def load_data(self, subset: Optional[str] = None) -> list[path_item]:
-        # hard coded
-        if self.audio_cache_dir is None:
-            self.audio_cache_dir = "genres_original"
-            root = osp.join(self.root, self.audio_cache_dir)
-            genres = os.listdir(root)
-            paths = []
-            missing_files = 0
-            if subset == "training":
-                for genre in genres:
-                    genre_path = osp.join(root, genre)
-                    files = sorted(os.listdir(genre_path))[:-20]
-                    for file in files:
-                        audio_path = osp.join(genre_path, file)
-                        paths.append(path_item(audio_path, None))
-
-            elif subset == "validation":
-                eq_path_root = osp.join(self.root, self.val_eq_dir)
-                eq_paths = sorted(os.listdir(eq_path_root))
-                eq_paths_gen = (osp.join(eq_path_root, f) for f in eq_paths)
-                for genre in genres:
-                    genre_path = osp.join(root, genre)
-                    files = sorted(os.listdir(genre_path))[-20:-10]
-                    for file in files:
-                        audio_path = osp.join(genre_path, file)
-                        paths.append(path_item(audio_path, next(eq_paths_gen)))
-
-            return paths
-
-        root = osp.join(self.root, self.audio_cache_dir)
-        genres = os.listdir(root)
+        audio_paths = glob.glob(osp.join(self.root, "**/*.wav"))
+        audio_paths = sorted(audio_paths)
         paths = []
-        missing_files = 0
+
         if subset == "training":
-            for genre in genres:
-                genre_path = osp.join(root, genre)
-                files = sorted(os.listdir(genre_path))[:-20]
-                for file in files:
-                    fs = os.listdir(osp.join(genre_path, file))
-                    for f in fs:
-                        audio_path = osp.join(genre_path, file, f)
-                        paths.append(path_item(audio_path, None))
+            audio_paths = audio_paths[:-5000]
+            paths = [path_item(audio_path, None) for audio_path in audio_paths]
 
         elif subset == "validation":
+            audio_paths = audio_paths[-5000:-2500]
             eq_path_root = osp.join(self.root, self.val_eq_dir)
             eq_paths = sorted(os.listdir(eq_path_root))
             eq_paths_gen = (osp.join(eq_path_root, f) for f in eq_paths)
-            for genre in genres:
-                genre_path = osp.join(root, genre)
-                files = sorted(os.listdir(genre_path))[-20:-10]
-                for file in files:
-                    fs = sorted(os.listdir(osp.join(genre_path, file)))
-                    for f in fs:
-                        audio_path = osp.join(genre_path, file, f)
-                        paths.append(path_item(audio_path, next(eq_paths_gen)))
+            for audio_path in audio_paths:
+                paths.append(path_item(audio_path, next(eq_paths_gen)))
 
         elif subset == "test":
-            pass  # TODO: Implement test set
+            audio_paths = audio_paths[-2500:]
+            eq_path_root = osp.join(self.root, self.val_eq_dir)
+            eq_paths = sorted(os.listdir(eq_path_root))
+            eq_paths_gen = (osp.join(eq_path_root, f) for f in eq_paths)
+            for audio_path in audio_paths:
+                paths.append(path_item(audio_path, next(eq_paths_gen)))
         else:
             raise ValueError("Invalid subset")
 
-        print(
-            f"Loaded {len(paths)} spectrograms and audio segments with {missing_files} missing files."
-        )
+        print(f"Loaded {len(paths)} audio segments.")
 
         return paths
 
@@ -112,18 +77,11 @@ class GTZANSpec(Dataset):
         path = self.paths[index]
 
         # load audio
-        # clean_audio, sr = librosa.load(path.audio_path, sr=None)
-        clean_audio, sr = torchaudio.load(path.audio_path)
-        clean_audio = clean_audio.squeeze(0).numpy()
+        clean_audio, sr = librosa.load(path.audio_path, sr=self.sr)
 
         # load eq and apply to spec
         if self.subset == "training":
-            min_db = np.random.randn() * 15 - 20
-            max_db = np.random.randn() * 7.5 + 10
-            ma_window = np.random.randint(10, 100)
-            eq = make_random_eq(
-                self.eq_shape, ma_window=ma_window, min_db=min_db, max_db=max_db
-            ).astype(np.float32)
+            eq = make_random_eq(self.eq_shape).astype(np.float32)
         elif self.subset == "validation":
             eq = np.load(path.eq_path).astype(np.float32)
         elif self.subset == "test":
@@ -139,7 +97,7 @@ class GTZANSpec(Dataset):
         return len(self.paths)
 
 
-class GTZANDataModule(L.LightningDataModule):
+class FMAMediumDataModule(L.LightningDataModule):
     def __init__(
         self,
         root: str,
@@ -149,6 +107,7 @@ class GTZANDataModule(L.LightningDataModule):
         audio_cache_dir: str = "segments_3sec",
         val_eq_dir: str = "random_walk_eqs",
         eq_shape: int = 1025,  # FIXME: Hardcoded and type is limited to int
+        sr: Optional[int] = None,
     ) -> None:
         super().__init__()
         self.root = root
@@ -161,33 +120,37 @@ class GTZANDataModule(L.LightningDataModule):
         self.audio_cache_dir = audio_cache_dir
         self.val_eq_dir = val_eq_dir
         self.eq_shape = eq_shape
+        self.sr = sr
 
     def setup(self, stage: str) -> None:
         if stage in ["fit", "validate"]:
-            self.train_dataset = GTZANSpec(
+            self.train_dataset = FMAMiddle(
                 self.root,
                 subset="training",
                 # transform=self.train_transform,
-                audio_cache_dir=self.audio_cache_dir,
+                # audio_cache_dir=self.audio_cache_dir,
                 val_eq_dir=self.val_eq_dir,
                 eq_shape=self.eq_shape,
+                sr=self.sr,
             )
-            self.val_dataset = GTZANSpec(
+            self.val_dataset = FMAMiddle(
                 self.root,
                 subset="validation",
                 # transform=self.val_transform,
-                audio_cache_dir=self.audio_cache_dir,
+                # audio_cache_dir=self.audio_cache_dir,
                 val_eq_dir=self.val_eq_dir,
                 eq_shape=self.eq_shape,
+                sr=self.sr,
             )
         else:
-            self.test_dataset = GTZANSpec(
+            self.test_dataset = FMAMiddle(
                 self.root,
                 subset="testing",
                 # transform=self.test_transform,
-                audio_cache_dir=self.audio_cache_dir,
+                # audio_cache_dir=self.audio_cache_dir,
                 val_eq_dir=self.val_eq_dir,
                 eq_shape=self.eq_shape,
+                sr=self.sr,
             )
 
     def _collate_fn(self, batch):
