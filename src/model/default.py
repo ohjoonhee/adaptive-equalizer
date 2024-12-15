@@ -145,29 +145,7 @@ class DefaultModel(L.LightningModule):
         self.is_wandb = isinstance(self.logger, WandbLogger)
         self.vis_per_batch = self.vis_per_batch if self.is_wandb else 0
 
-    def on_train_epoch_start(self) -> None:
-        if self.trainer.current_epoch != 0:
-            return
-        if self.vis_per_batch:
-            self.train_table = wandb.Table(
-                columns=["clean_audio", "noisy_audio", "recon_audio", "pred"]
-            )
-
     def training_step(self, batch, batch_idx):
-        if (
-            self.current_epoch == 0
-            and self.vis_per_batch
-            and batch_idx < self.vis_batches
-        ):
-            self.visualize_train_batches(
-                batch["noisy_spec"],
-                batch["label"],
-                torch.zeros_like(batch["label"]),
-                batch["clean_audio"],
-                batch["noisy_audio"],
-                batch["noisy_audio"],
-            )
-
         specs = batch["noisy_spec"]
         specs = torch.abs(specs).float()
         specs = specs**self.compression
@@ -178,18 +156,6 @@ class DefaultModel(L.LightningModule):
         self.log("train/loss", loss.item(), prog_bar=True)
 
         return loss
-
-    def on_train_epoch_end(self) -> None:
-        if self.trainer.current_epoch != 0:
-            return
-        if self.vis_per_batch:
-            self.logger.experiment.log({"train/samples": self.train_table})
-
-    def on_validation_epoch_start(self) -> None:
-        if self.vis_per_batch:
-            self.table = wandb.Table(
-                columns=["clean_audio", "noisy_audio", "recon_audio", "pred"]
-            )
 
     def validation_step(self, batch, batch_idx):
         specs = batch["noisy_spec"]
@@ -224,76 +190,13 @@ class DefaultModel(L.LightningModule):
             on_step=False,
         )
 
-        if self.vis_per_batch and batch_idx < self.vis_batches:
-            self.visualize_preds(
-                specs,
-                labels,
-                preds,
-                batch["clean_audio"],
-                batch["noisy_audio"],
-                recon_audio,
-            )
+        return {
+            "loss": loss,
+            "recon_spec": recon_specs,
+            "recon_audio": recon_audio,
+            "pred": preds,
+        } # for visualization
 
-    def visualize_preds(
-        self, specs, labels, pred, clean_audio, noisy_audio, recon_audio
-    ):
-        x_logscale = np.logspace(0, np.log10(self.sr / 2), labels.size(-1))
-        for i in range(min(len(clean_audio), self.vis_per_batch)):
-            plt.plot(x_logscale, labels[i].cpu().numpy() * 20, label="label")
-            plt.plot(x_logscale, pred[i].cpu().numpy() * 20, label="pred")
-            plt.ylabel("Magnitude (dB)")
-            plt.xlabel("Frequency (Hz)")
-            plt.xscale("log")
-            plt.legend()
-            self.table.add_data(
-                wandb.Audio(
-                    clean_audio[i].squeeze().cpu().numpy(), sample_rate=self.sr
-                ),
-                wandb.Audio(
-                    noisy_audio[i].squeeze().cpu().numpy(), sample_rate=self.sr
-                ),
-                wandb.Audio(
-                    recon_audio[i].squeeze().cpu().numpy(), sample_rate=self.sr
-                ),
-                wandb.Image(plt),
-            )
-            plt.close()
-
-    def visualize_train_batches(
-        self, specs, labels, pred, clean_audio, noisy_audio, recon_audio
-    ):
-        x_logscale = np.logspace(0, np.log10(self.sr / 2), labels.size(-1))
-        for i in range(min(len(clean_audio), self.vis_per_batch)):
-            plt.plot(x_logscale, labels[i].cpu().numpy() * 20, label="label")
-            plt.plot(x_logscale, pred[i].cpu().numpy() * 20, label="pred")
-            plt.ylabel("Magnitude (dB)")
-            plt.xlabel("Frequency (Hz)")
-            plt.xscale("log")
-            plt.legend()
-            self.train_table.add_data(
-                wandb.Audio(
-                    clean_audio[i].squeeze().cpu().numpy(), sample_rate=self.sr
-                ),
-                wandb.Audio(
-                    noisy_audio[i].squeeze().cpu().numpy(), sample_rate=self.sr
-                ),
-                wandb.Audio(
-                    recon_audio[i].squeeze().cpu().numpy(), sample_rate=self.sr
-                ),
-                wandb.Image(plt),
-            )
-            plt.close()
-
-    def on_validation_epoch_end(self) -> None:
-        if self.vis_per_batch:
-            self.logger.experiment.log({"val/samples": self.table})
-
-    # def test_step(self, batch, batch_idx):
-    #     img, labels = batch
-    #     pred = self(img)
-
-    #     acc = self.accuracy(pred, labels)
-    #     self.log("test_acc", acc)
 
 
 def interp(

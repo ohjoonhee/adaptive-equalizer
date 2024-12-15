@@ -38,24 +38,9 @@ class GramLossModel(DefaultModel):
         return self.net(*args, **kwargs)
 
     def training_step(self, batch, batch_idx):
-        if (
-            self.current_epoch == 0
-            and self.vis_per_batch
-            and batch_idx < self.vis_batches
-        ):
-            self.visualize_train_batches(
-                batch["noisy_spec"],
-                batch["label"],
-                torch.zeros_like(batch["label"]),
-                batch["clean_audio"],
-                batch["noisy_audio"],
-                batch["noisy_audio"],
-            )
-
         specs = batch["noisy_spec"]
         specs = torch.abs(specs).float()
         specs = specs**self.compression
-        # labels = batch["label"]
         preds = self(specs.unsqueeze(1))
 
         recon = self.apply_inv_eq(torch.abs(batch["noisy_spec"]).float(), preds)
@@ -99,15 +84,12 @@ class GramLossModel(DefaultModel):
             on_step=False,
         )
 
-        if self.vis_per_batch and batch_idx < self.vis_batches:
-            self.visualize_preds(
-                specs,
-                labels,
-                preds,
-                batch["clean_audio"],
-                batch["noisy_audio"],
-                recon_audio,
-            )
+        return {
+            "loss": loss,
+            "recon_spec": recon_specs,
+            "recon_audio": recon_audio,
+            "pred": preds,
+        }
 
 
 def interp(

@@ -1,6 +1,6 @@
 # lightning.pytorch==2.0.0
-name: gram-loss_logger-cb
-version: v0
+name: dev_logger-cb-valadd
+version: v1
 
 seed_everything: 42
 trainer:
@@ -24,7 +24,7 @@ trainer:
   #     filename: profile
 
 model:
-  class_path: GramLossModel
+  class_path: DefaultModel
   init_args:
     net:
       class_path: net.eff.EfficientNet
