@@ -1,5 +1,5 @@
 # lightning.pytorch==2.0.0
-name: fma-s_wd1e-5
+name: fma-s-22k_addnoise
 version: v0
 
 seed_everything: 42
@@ -10,6 +10,15 @@ trainer:
   deterministic: true
   plugins:
     - AsyncCheckpointIO
+  callbacks:
+    - class_path: WandbSampleLoggerCallback
+      init_args:
+        train_log_interval: 1000
+        val_log_interval: 5
+        train_samples_per_batch: 10
+        val_samples_per_batch: 10
+        train_batches_per_epoch: 10
+        val_batches_per_epoch: 10
   # profiler:
   #   class_path: SimpleProfiler
   #   init_args:
@@ -34,10 +43,6 @@ model:
     criterion:
       class_path: MSELoss
 
-    # log visualization of total 100 samples per epoch
-    vis_per_batch: 10 # log visualization of 10 samples per batch
-    vis_batches: 10 # log visualization of 10 batches per epoch
-
 data:
   class_path: FMADataModule
   init_args:
@@ -48,6 +53,7 @@ data:
     metadata_path: /mnt/ssd/datasets/fma_metadata
     subset: small
     val_eq_dir: random_walk_eqs_db
+    noise_path: data/noise_samples_683550_length_22050_hz.npz
     # transforms:
     #   class_path: DefaultTransforms
 

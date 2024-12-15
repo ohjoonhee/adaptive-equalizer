@@ -17,6 +17,7 @@ from torch.utils.data import DataLoader, Dataset
 import lightning as L
 from lightning.pytorch.utilities.types import TRAIN_DATALOADERS, EVAL_DATALOADERS
 
+from .common import AudioDatasetFromFolder
 from transforms.base import BaseTransforms
 from utils.make_eqs import make_random_eq
 
@@ -149,6 +150,7 @@ class GTZANDataModule(L.LightningDataModule):
         audio_cache_dir: str = "segments_3sec",
         val_eq_dir: str = "random_walk_eqs",
         eq_shape: int = 1025,  # FIXME: Hardcoded and type is limited to int
+        sr: Optional[int] = None,
     ) -> None:
         super().__init__()
         self.root = root
@@ -161,6 +163,7 @@ class GTZANDataModule(L.LightningDataModule):
         self.audio_cache_dir = audio_cache_dir
         self.val_eq_dir = val_eq_dir
         self.eq_shape = eq_shape
+        self.sr = sr
 
     def setup(self, stage: str) -> None:
         if stage in ["fit", "validate"]:
@@ -179,6 +182,13 @@ class GTZANDataModule(L.LightningDataModule):
                 audio_cache_dir=self.audio_cache_dir,
                 val_eq_dir=self.val_eq_dir,
                 eq_shape=self.eq_shape,
+            )
+        elif stage == "predict":
+            self.predict_dataset = AudioDatasetFromFolder(
+                self.root,
+                ext="wav",
+                sr=self.sr,
+                transform=None,
             )
         else:
             self.test_dataset = GTZANSpec(
@@ -202,6 +212,22 @@ class GTZANDataModule(L.LightningDataModule):
         batch = {
             "clean_audio": clean_audios,
             "label": labels,
+        }
+
+        return batch
+
+    def _predict_collate_fn(self, batch):
+        noisy_audio = [item["noisy_audio"] for item in batch]
+        sr = torch.stack([torch.tensor(item["sr"]) for item in batch])
+
+        min_len = min([len(audio) for audio in noisy_audio])
+        noisy_audio = torch.stack(
+            [torch.tensor(audio[:min_len]) for audio in noisy_audio]
+        )
+
+        batch = {
+            "noisy_audio": noisy_audio,
+            "sr": sr,
         }
 
         return batch
@@ -231,4 +257,13 @@ class GTZANDataModule(L.LightningDataModule):
             shuffle=False,
             num_workers=self.num_workers,
             # collate_fn=self._collate_fn,
+        )
+
+    def predict_dataloader(self):
+        return DataLoader(
+            self.predict_dataset,
+            batch_size=self.batch_size,
+            shuffle=False,
+            num_workers=self.num_workers,
+            collate_fn=self._predict_collate_fn,
         )

@@ -21,6 +21,7 @@ from torch.utils.data import DataLoader, Dataset
 import lightning as L
 from lightning.pytorch.utilities.types import TRAIN_DATALOADERS, EVAL_DATALOADERS
 
+from .noise import NoiseDataset
 from transforms.base import BaseTransforms
 from utils.make_eqs import make_random_eq
 
@@ -37,6 +38,7 @@ class FMA(Dataset):
         val_eq_dir: str = "random_walk_eqs_db",
         eq_shape: int = 1025,  # FIXME: Hardcoded and type is limited to int
         sr: Optional[int] = None,
+        noise_path: Optional[str] = None,
     ) -> None:
         super().__init__()
         self.root = root
@@ -45,6 +47,9 @@ class FMA(Dataset):
         self.eq_shape = eq_shape
         self.val_eq_dir = val_eq_dir
         self.sr = sr
+        self.noise_ds = (
+            iter(NoiseDataset(noise_path, sr * 31, sr)) if noise_path else None
+        )
 
         assert subset in ["small", "medium", "large"]
         assert split in ["training", "validation", "test"]
@@ -163,12 +168,16 @@ class FMA(Dataset):
 
         # load eq and apply to spec
         if self.split == "training":
-            min_db = np.random.randn() * 15 - 20
-            max_db = np.random.randn() * 7.5 + 10
-            ma_window = np.random.randint(10, 100)
+            min_db = np.random.uniform(low=-30, high=-2)
+            max_db = np.random.uniform(low=1, high=3)
+            ma_window = np.random.randint(30, 120)
             eq = make_random_eq(
                 self.eq_shape, ma_window=ma_window, min_db=min_db, max_db=max_db
             ).astype(np.float32)
+            if self.noise_ds and np.random.rand() < 0.7:
+                noise = (next(self.noise_ds)).squeeze().numpy()
+                noise_level = np.random.uniform(low=0.1, high=1.0)
+                clean_audio = clean_audio + noise_level* noise[: len(clean_audio)]
             # eq = make_random_eq(self.eq_shape).astype(np.float32)
         elif self.split == "validation":
             eq = np.load(item.eq_path).astype(np.float32)
@@ -198,6 +207,7 @@ class FMADataModule(L.LightningDataModule):
         val_eq_dir: str = "random_walk_eqs_db",
         eq_shape: int = 1025,  # FIXME: Hardcoded and type is limited to int
         sr: Optional[int] = None,
+        noise_path: Optional[str] = None,
     ) -> None:
         super().__init__()
         self.root = root
@@ -213,6 +223,7 @@ class FMADataModule(L.LightningDataModule):
         self.val_eq_dir = val_eq_dir
         self.eq_shape = eq_shape
         self.sr = sr
+        self.noise_path = noise_path
 
     def setup(self, stage: str) -> None:
         if stage in ["fit", "validate"]:
@@ -226,6 +237,7 @@ class FMADataModule(L.LightningDataModule):
                 val_eq_dir=self.val_eq_dir,
                 eq_shape=self.eq_shape,
                 sr=self.sr,
+                noise_path=self.noise_path,
             )
             self.val_dataset = FMA(
                 self.root,
