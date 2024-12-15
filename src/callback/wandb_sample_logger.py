@@ -121,3 +121,37 @@ class WandbSampleLoggerCallback(Callback):
     def on_validation_epoch_end(self, trainer, pl_module):
         if trainer.current_epoch % self.val_log_interval == 0:
             trainer.logger.experiment.log({"val/samples": self.val_table})
+
+    def on_predict_epoch_start(self, trainer, pl_module):
+        self.predict_table = wandb.Table(columns=["noisy_audio", "recon_audio", "pred"])
+
+    def on_predict_batch_end(
+        self,
+        trainer,
+        pl_module,
+        outputs,
+        batch,
+        batch_idx,
+    ):
+        # labels = batch["label"]
+        pred = outputs["pred"]
+        # clean_audio = batch["clean_audio"]
+        noisy_audio = outputs["noisy_audio"]
+        recon_audio = outputs["recon_audio"]
+        x_logscale = np.logspace(0, np.log10(pl_module.sr / 2), pred.size(-1))
+        for i in range(len(pred)):
+            # plt.plot(x_logscale, labels[i].cpu().numpy() * 20, label="label")
+            plt.plot(x_logscale, pred[i].cpu().numpy() * 20, label="pred")
+            plt.ylabel("Magnitude (dB)")
+            plt.xlabel("Frequency (Hz)")
+            plt.xscale("log")
+            plt.legend()
+            self.predict_table.add_data(
+                wandb.Audio(noisy_audio[i], sample_rate=pl_module.sr),
+                wandb.Audio(recon_audio[i], sample_rate=pl_module.sr),
+                wandb.Image(plt),
+            )
+            plt.close()
+
+    def on_predict_epoch_end(self, trainer, pl_module):
+        trainer.logger.experiment.log({"predict/samples": self.predict_table})

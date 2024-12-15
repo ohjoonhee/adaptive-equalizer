@@ -1,8 +1,12 @@
 from typing import Optional
 from dataclasses import dataclass, asdict
 
+import os
+import os.path as osp
 import matplotlib.pyplot as plt
 import numpy as np
+import librosa
+import soundfile as sf
 
 import torch
 from torch import nn
@@ -41,8 +45,7 @@ class DefaultModel(L.LightningModule):
         stft_params: STFTConfig,
         sr: Optional[int] = None,
         compression: Optional[float] = None,
-        vis_per_batch: int = 0,
-        vis_batches: Optional[int] = None,
+        normalize: bool = False,
     ) -> None:
         super().__init__()
         self.save_hyperparameters(ignore=["net", "criterion"])
@@ -51,15 +54,13 @@ class DefaultModel(L.LightningModule):
         self.criterion = criterion
         self.sr = sr
         self.compression = compression if compression is not None else 1
+        self.norm_mean = 0.6855 if normalize else 0
+        self.norm_std = 0.5520 if normalize else 1
 
         # for validation metrics
         self.l1_spec = MeanAbsoluteError()
         self.sdr = SignalDistortionRatio()
         self.si_sdr = ScaleInvariantSignalDistortionRatio()
-
-        # For visualization
-        self.vis_per_batch = vis_per_batch
-        self.vis_batches = vis_batches if vis_batches is not None else float("inf")
 
         # STFT params
         win = self.get_window(stft_params.window, stft_params.win_length)
@@ -78,6 +79,7 @@ class DefaultModel(L.LightningModule):
         return window_tensor
 
     def forward(self, x):
+        x = (x - self.norm_mean) / self.norm_std
         return self.net(x)
 
     def apply_eq(self, spec, eq):
@@ -93,6 +95,16 @@ class DefaultModel(L.LightningModule):
     def on_after_batch_transfer(
         self, batch: torch.Any, dataloader_idx: int
     ) -> torch.Any:
+        if self.trainer.predicting:
+            noisy_audio = batch["noisy_audio"]
+            noisy_spec = torch.stft(
+                noisy_audio, window=self.window, return_complex=True, **self.stft_params
+            )
+            return {
+                "noisy_spec": noisy_spec,
+                "noisy_audio": noisy_audio,
+                "sr": batch["sr"],
+            }
         clean_audio = batch["clean_audio"]
 
         # seg_len = 66150
@@ -138,12 +150,6 @@ class DefaultModel(L.LightningModule):
         batch["label"] = -eq / 20
 
         return batch
-
-    def on_fit_start(self) -> None:
-        # Note that self.logger is set by the Trainer.fit()
-        # self.logger is None at self.__init__
-        self.is_wandb = isinstance(self.logger, WandbLogger)
-        self.vis_per_batch = self.vis_per_batch if self.is_wandb else 0
 
     def training_step(self, batch, batch_idx):
         specs = batch["noisy_spec"]
@@ -195,8 +201,52 @@ class DefaultModel(L.LightningModule):
             "recon_spec": recon_specs,
             "recon_audio": recon_audio,
             "pred": preds,
-        } # for visualization
+        }  # for visualization
 
+    def on_predict_epoch_start(self):
+        self.log_root_dir = self.logger.log_dir or self.logger.save_dir
+        os.makedirs(osp.join(self.log_root_dir, "noisy"), exist_ok=True)
+        os.makedirs(osp.join(self.log_root_dir, "recon"), exist_ok=True)
+
+    def predict_step(self, batch, batch_idx):
+        specs = batch["noisy_spec"]
+        specs = torch.abs(specs).float()
+        specs = specs**self.compression
+        preds = self(specs.unsqueeze(1))
+
+        # reconstruct audio
+        recon_specs = self.apply_inv_eq(batch["noisy_spec"], preds)
+        recon_audio = torch.istft(
+            recon_specs, window=self.window, return_complex=False, **self.stft_params
+        )
+
+        output_noisy = []
+        output_recon = []
+        for i in range(len(recon_audio)):
+            noisy_audio = batch["noisy_audio"][i]
+            noisy_audio = noisy_audio.cpu().numpy()
+            # noisy_audio = librosa.util.normalize(noisy_audio)
+            sf.write(
+                osp.join(self.log_root_dir, "noisy", f"{batch_idx:03d}_{i:02d}.wav"),
+                noisy_audio,
+                self.sr,
+            )
+            output_noisy.append(noisy_audio)
+
+            recon_audio_i = recon_audio[i].cpu().numpy()
+            recon_audio_i = librosa.util.normalize(recon_audio_i)
+            sf.write(
+                osp.join(self.log_root_dir, "recon", f"{batch_idx:03d}_{i:02d}.wav"),
+                recon_audio_i,
+                self.sr,
+            )
+            output_recon.append(recon_audio_i)
+
+        return {
+            "noisy_audio": output_noisy,
+            "recon_audio": output_recon,
+            "pred": preds,
+        }
 
 
 def interp(
