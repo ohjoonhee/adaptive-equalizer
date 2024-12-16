@@ -1,6 +1,6 @@
 # lightning.pytorch==2.0.0
 name: dev_predict_addnoise_fta
-version: ep7
+version: ep7-fixconfig-fixmodelv5
 
 seed_everything: 42
 trainer:
@@ -27,7 +27,10 @@ model:
   class_path: DefaultModel
   init_args:
     net:
-      class_path: net.eff.EfficientNet
+      class_path: net.fta.FTAnet
+      init_args:
+        freq_bin: 1025
+        time_segment: 130
 
     stft_params:
       n_fft: 2048

@@ -1,6 +1,6 @@
 # lightning.pytorch==2.0.0
-name: fma-s-22k_addnoise_ftanet
-version: v0-batch4
+name: fma-s-22k_addnoise_ftanet-fix
+version: v0
 
 seed_everything: 42
 trainer:

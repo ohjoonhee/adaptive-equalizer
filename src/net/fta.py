@@ -11,7 +11,7 @@ class SF_Module(nn.Module):
         self.f_avg = nn.AdaptiveAvgPool2d((1, 1))
         self.f_bn = nn.BatchNorm1d(n_channel)
         self.f_linear = nn.Sequential(
-            nn.Linear(n_channel, max(n_channel // reduction, limitation)), nn.SELU()
+            nn.Linear(n_channel, max(n_channel // reduction, limitation)), nn.SiLU()
         )
         # Select Layer
         self.s_linear = nn.ModuleList(
@@ -23,12 +23,14 @@ class SF_Module(nn.Module):
 
     def forward(self, x):
         # x [3, bs, c, h, w]
-        fused = None
-        for x_s in x:
-            if fused is None:
-                fused = x_s
-            else:
-                fused = fused + x_s
+        # fused = None
+        # for x_s in x:
+        #     if fused is None:
+        #         fused = x_s
+        #     else:
+        #         fused = fused + x_s
+        x = torch.stack(x, dim=0)
+        fused = x.sum(dim=0)
         # [bs, c, h, w]
         fused = self.f_avg(fused)  # bs,c,1,1
         fused = fused.view(fused.shape[0], fused.shape[1])
@@ -42,14 +44,19 @@ class SF_Module(nn.Module):
         mask_stack = torch.stack(masks, dim=-1)  # bs, c, 3
         mask_stack = nn.Softmax(dim=-2)(mask_stack)
 
-        selected = None
-        for i, x_s in enumerate(x):
-            mask = mask_stack[:, :, i][:, :, None, None]  # bs,c,1,1
-            x_s = x_s * mask
-            if selected is None:
-                selected = x_s
-            else:
-                selected = selected + x_s
+        # selected = None
+        # for i, x_s in enumerate(x):
+        #     mask = mask_stack[:, :, i][:, :, None, None]  # bs,c,1,1
+        #     x_s = x_s * mask
+        #     if selected is None:
+        #         selected = x_s
+        #     else:
+        #         selected = selected + x_s
+
+        masks = (
+            mask_stack.permute(2, 0, 1).unsqueeze(-1).unsqueeze(-1)
+        )  # 3, bs, c, 1, 1
+        selected = (x * masks).sum(dim=0)  # bs, c, h, w
         # [bs, c, h,w]
         return selected
 
@@ -58,31 +65,31 @@ class FTA_Module(nn.Module):
     def __init__(self, shape, kt, kf):
         super(FTA_Module, self).__init__()
         self.bn = nn.BatchNorm2d(shape[2])
-        self.r_cn = nn.Sequential(nn.Conv2d(shape[2], shape[3], (1, 1)), nn.ReLU())
+        self.r_cn = nn.Sequential(nn.Conv2d(shape[2], shape[3], (1, 1)), nn.SiLU())
         self.ta_cn1 = nn.Sequential(
-            nn.Conv1d(shape[2], shape[3], kt, padding=(kt - 1) // 2), nn.SELU()
+            nn.Conv1d(shape[2], shape[3], kt, padding=(kt - 1) // 2), nn.SiLU()
         )
         self.ta_cn2 = nn.Sequential(
-            nn.Conv1d(shape[3], shape[3], kt, padding=(kt - 1) // 2), nn.SELU()
+            nn.Conv1d(shape[3], shape[3], kt, padding=(kt - 1) // 2), nn.SiLU()
         )
         self.ta_cn3 = nn.Sequential(
-            nn.Conv2d(shape[2], shape[3], 3, padding=1), nn.SELU()
+            nn.Conv2d(shape[2], shape[3], 3, padding=1), nn.SiLU()
         )
         self.ta_cn4 = nn.Sequential(
-            nn.Conv2d(shape[3], shape[3], 5, padding=2), nn.SELU()
+            nn.Conv2d(shape[3], shape[3], 5, padding=2), nn.SiLU()
         )
 
         self.fa_cn1 = nn.Sequential(
-            nn.Conv1d(shape[2], shape[3], kf, padding=(kf - 1) // 2), nn.SELU()
+            nn.Conv1d(shape[2], shape[3], kf, padding=(kf - 1) // 2), nn.SiLU()
         )
         self.fa_cn2 = nn.Sequential(
-            nn.Conv1d(shape[3], shape[3], kf, padding=(kf - 1) // 2), nn.SELU()
+            nn.Conv1d(shape[3], shape[3], kf, padding=(kf - 1) // 2), nn.SiLU()
         )
         self.fa_cn3 = nn.Sequential(
-            nn.Conv2d(shape[2], shape[3], 3, padding=1), nn.SELU()
+            nn.Conv2d(shape[2], shape[3], 3, padding=1), nn.SiLU()
         )
         self.fa_cn4 = nn.Sequential(
-            nn.Conv2d(shape[3], shape[3], 5, padding=2), nn.SELU()
+            nn.Conv2d(shape[3], shape[3], 5, padding=2), nn.SiLU()
         )
 
     def forward(self, x):
@@ -117,13 +124,13 @@ class FTAnet(nn.Module):
         # bm
         self.bm_layer = nn.Sequential(
             nn.Conv2d(1, 16, (4, 1), stride=(4, 1)),
-            nn.SELU(),
+            nn.SiLU(),
             nn.Conv2d(16, 16, (4, 1), stride=(4, 1)),
-            nn.SELU(),
+            nn.SiLU(),
             nn.Conv2d(16, 16, (4, 1), stride=(4, 1)),
-            nn.SELU(),
+            nn.SiLU(),
             nn.Conv2d(16, 1, (5, 1), stride=(5, 1)),
-            nn.SELU(),
+            nn.SiLU(),
         )
 
         # fta_module
@@ -153,7 +160,7 @@ class FTAnet(nn.Module):
         self.head = nn.Sequential(
             SamePadConv2d(256, 1280, kernel_size=1),
             nn.BatchNorm2d(1280),
-            nn.SELU(),
+            nn.SiLU(),
         )
         self.classifier = nn.Sequential(
             nn.AdaptiveAvgPool2d(1),

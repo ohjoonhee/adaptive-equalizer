@@ -236,6 +236,9 @@ class DefaultModel(L.LightningModule):
             output_noisy.append(noisy_audio)
 
             recon_audio_i = recon_audio[i].cpu().numpy()
+            if np.isnan(recon_audio_i).any():
+                print("Output contains NaN values")
+                print(recon_audio_i)
             recon_audio_i = librosa.util.normalize(recon_audio_i)
             sf.write(
                 osp.join(self.log_root_dir, "recon", f"{batch_idx:03d}_{i:02d}.wav"),
