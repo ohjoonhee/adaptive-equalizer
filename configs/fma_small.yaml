@@ -1,6 +1,6 @@
 # lightning.pytorch==2.0.0
-name: fma-s-22k_addnoise
-version: v0
+name: fma-s-44k_addnoise_wd1e-3
+version: final-v0
 
 seed_everything: 42
 trainer:
@@ -37,7 +37,7 @@ model:
       center: true
       window: hann_window
 
-    sr: 22050
+    sr: 44100
     compression: 0.3
 
     criterion:
@@ -46,14 +46,14 @@ model:
 data:
   class_path: FMADataModule
   init_args:
-    root: /mnt/ssd/datasets/fma_small_wav_22k_mono
-    batch_size: 16
-    num_workers: 8
+    root: data/fma_small_wav_44k
+    batch_size: 8
+    num_workers: 32
     sr: ${model.init_args.sr}
-    metadata_path: /mnt/ssd/datasets/fma_metadata
+    metadata_path: data/fma_metadata
     subset: small
     val_eq_dir: random_walk_eqs_db
-    noise_path: data/noise_samples_683550_length_22050_hz.npz
+    noise_path: data/noise_samples_1367100_length_44100_hz.npz
     # transforms:
     #   class_path: DefaultTransforms
 
@@ -61,7 +61,7 @@ optimizer:
   class_path: AdamW
   init_args:
     lr: 1e-3
-    weight_decay: 1e-5
+    weight_decay: 1e-2
 
 lr_scheduler:
   class_path: CosineAnnealingLR

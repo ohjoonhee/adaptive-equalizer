@@ -41,8 +41,11 @@ def make_random_eq(shape, ma_window=15, min_db=-20, max_db=2):
 
 if __name__ == "__main__":
     # eq_path = "data/random_walk_eqs_db"
-    eq_path = "/mnt/ssd/datasets/fma_medium/random_walk_eqs_db"
+    eq_path = "data/fma_small_wav_44k/random_walk_eqs_db"
 
     for i in range(6000):
-        eq = make_random_eq(1025)
+        min_db = np.random.uniform(low=-30, high=-2)
+        max_db = np.random.uniform(low=1, high=3)
+        ma_window = np.random.randint(30, 120)
+        eq = make_random_eq(1025, ma_window, min_db, max_db)
         np.save(osp.join(eq_path, f"{i:06d}.npy"), eq)

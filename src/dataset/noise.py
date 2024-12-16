@@ -131,5 +131,5 @@ if __name__ == "__main__":
             test=test,
         )
 
-    sr = 22050
-    process_noise("data/ACE_Corpus_RIRN_Single/Single", sr * 31, sr, 0.1, 0.1, "data/")
+    sr = 44100
+    process_noise("data/Single", sr * 31, sr, 0.1, 0.1, "data/")

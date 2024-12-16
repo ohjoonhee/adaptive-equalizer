@@ -9,6 +9,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 import wandb
+from lightning.pytorch.utilities import rank_zero_only
 
 
 class WandbSampleLoggerCallback(Callback):
@@ -35,12 +36,14 @@ class WandbSampleLoggerCallback(Callback):
         self.train_batches_per_epoch = train_batches_per_epoch
         self.val_batches_per_epoch = val_batches_per_epoch
 
+    @rank_zero_only
     def on_train_epoch_start(self, trainer, pl_module):
         if trainer.current_epoch % self.train_log_interval == 0:
             self.train_table = wandb.Table(
                 columns=["clean_audio", "noisy_audio", "label"]
             )
 
+    @rank_zero_only
     def on_train_batch_end(
         self,
         trainer: pl.Trainer,
@@ -74,16 +77,19 @@ class WandbSampleLoggerCallback(Callback):
                 )
                 plt.close()
 
+    @rank_zero_only
     def on_train_epoch_end(self, trainer, pl_module):
         if trainer.current_epoch % self.train_log_interval == 0:
             trainer.logger.experiment.log({"train/samples": self.train_table})
 
+    @rank_zero_only
     def on_validation_epoch_start(self, trainer, pl_module):
         if trainer.current_epoch % self.val_log_interval == 0:
             self.val_table = wandb.Table(
                 columns=["clean_audio", "noisy_audio", "recon_audio", "pred"]
             )
 
+    @rank_zero_only
     def on_validation_batch_end(
         self, trainer, pl_module, outputs, batch, batch_idx, dataloader_idx=0
     ):
@@ -118,13 +124,16 @@ class WandbSampleLoggerCallback(Callback):
                 )
                 plt.close()
 
+    @rank_zero_only
     def on_validation_epoch_end(self, trainer, pl_module):
         if trainer.current_epoch % self.val_log_interval == 0:
             trainer.logger.experiment.log({"val/samples": self.val_table})
 
+    @rank_zero_only
     def on_predict_epoch_start(self, trainer, pl_module):
         self.predict_table = wandb.Table(columns=["noisy_audio", "recon_audio", "pred"])
 
+    @rank_zero_only
     def on_predict_batch_end(
         self,
         trainer,
@@ -153,5 +162,6 @@ class WandbSampleLoggerCallback(Callback):
             )
             plt.close()
 
+    @rank_zero_only
     def on_predict_epoch_end(self, trainer, pl_module):
         trainer.logger.experiment.log({"predict/samples": self.predict_table})

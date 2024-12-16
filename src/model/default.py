@@ -92,9 +92,7 @@ class DefaultModel(L.LightningModule):
         eq = torch.pow(10, preds)
         return spec * eq.unsqueeze(-1)
 
-    def on_after_batch_transfer(
-        self, batch: torch.Any, dataloader_idx: int
-    ) -> torch.Any:
+    def on_after_batch_transfer(self, batch: dict, dataloader_idx: int) -> dict:
         if self.trainer.predicting:
             noisy_audio = batch["noisy_audio"]
             noisy_spec = torch.stft(
@@ -170,7 +168,7 @@ class DefaultModel(L.LightningModule):
         labels = batch["label"]
         preds = self(specs.unsqueeze(1))
 
-        loss = self.criterion(preds, labels)
+        loss = self.criterion(preds.contiguous(), labels.contiguous())
 
         # reconstruct audio
         recon_specs = self.apply_inv_eq(batch["noisy_spec"], preds)
@@ -179,7 +177,10 @@ class DefaultModel(L.LightningModule):
         )
 
         # l1 spectrum metric
-        self.l1_spec(torch.abs(recon_specs).float(), batch["clean_spec"])
+        self.l1_spec(
+            torch.abs(recon_specs).float().contiguous(),
+            batch["clean_spec"].contiguous(),
+        )
 
         # Compute SDR and SI-SDR
         self.sdr(batch["clean_audio"][..., : recon_audio.shape[-1]], recon_audio)
@@ -194,6 +195,7 @@ class DefaultModel(L.LightningModule):
             },
             on_epoch=True,
             on_step=False,
+            sync_dist=True,
         )
 
         return {

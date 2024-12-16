@@ -91,8 +91,8 @@ class DatasetStatsModel(L.LightningModule):
         return spec * eq.unsqueeze(-1)
 
     def on_after_batch_transfer(
-        self, batch: torch.Any, dataloader_idx: int
-    ) -> torch.Any:
+        self, batch: dict, dataloader_idx: int
+    ) -> dict:
         clean_audio = batch["clean_audio"]
 
         # seg_len = 66150
