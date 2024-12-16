@@ -71,8 +71,8 @@ if __name__ == "__main__":
     )
 
     score = frechet.score(
-        background_dir="/mnt/ssd/datasets/youtube_live_music/background_fma_44k",
-        # eval_dir="logs/dev_predict_sr=44k/v1/predict/noisy",
-        eval_dir="logs/dev_predict_sr=44k/v1/predict/recon",
+        background_dir="/mnt/ssd/datasets/youtube_live_music/background_fma_22k",
+        # eval_dir="logs/dev_predict_addnoise/ep299/predict/noisy",
+        eval_dir="logs/dev_predict_addnoise/ep299/predict/recon",
     )
     print(score)

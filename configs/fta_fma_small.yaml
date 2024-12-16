@@ -1,12 +1,13 @@
 # lightning.pytorch==2.0.0
-name: dev_predict_addnoise
-version: ep299
+name: fma-s-22k_addnoise_ftanet
+version: v0-batch4
 
 seed_everything: 42
 trainer:
   accelerator: gpu
   precision: 16-mixed
   max_epochs: 300
+  deterministic: true
   plugins:
     - AsyncCheckpointIO
   callbacks:
@@ -27,7 +28,10 @@ model:
   class_path: DefaultModel
   init_args:
     net:
-      class_path: net.eff.EfficientNet
+      class_path: net.fta.FTAnet
+      init_args:
+        freq_bin: 1025
+        time_segment: 130
 
     stft_params:
       n_fft: 2048
@@ -42,21 +46,19 @@ model:
     criterion:
       class_path: MSELoss
 
-    # log visualization of total 100 samples per epoch
-    # vis_per_batch: 10 # log visualization of 10 samples per batch
-    # vis_batches: 10 # log visualization of 10 batches per epoch
-
 data:
-  class_path: GTZANDataModule
+  class_path: FMADataModule
   init_args:
-    root: /mnt/ssd/datasets/youtube_live_music/wav_files_50_44k
-    batch_size: 2
+    root: /mnt/ssd/datasets/fma_small_wav_22k_mono
+    batch_size: 4
+    num_workers: 8
+    sr: ${model.init_args.sr}
+    metadata_path: /mnt/ssd/datasets/fma_metadata
+    subset: small
+    val_eq_dir: random_walk_eqs_db
+    noise_path: data/noise_samples_683550_length_22050_hz.npz
     # transforms:
     #   class_path: DefaultTransforms
-    sr: ${model.init_args.sr}
-    num_workers: 0
-    val_eq_dir: random_walk_eqs_db
-    audio_cache_dir: null
 
 optimizer:
   class_path: AdamW
@@ -76,7 +78,7 @@ early_stopping:
 
 model_ckpt:
   # dirpath: "gs://bucket-name[/extra-path]"
-  monitor: val/loss
-  mode: min
+  monitor: val/si-sdr
+  mode: max
   auto_insert_metric_name: false
-  filename: "best-epoch={epoch:02d}-val_loss={val/loss:.4f}"
+  filename: "best-epoch={epoch:02d}-val_sisdr={val/si-sdr:.4f}"
