@@ -1,5 +1,5 @@
 # lightning.pytorch==2.0.0
-name: fma-s-22k_addnoise_ftanet-fix
+name: fma-s-22k_addnoise_effftanet-fix
 version: v0
 
 seed_everything: 42
@@ -28,7 +28,7 @@ model:
   class_path: DefaultModel
   init_args:
     net:
-      class_path: net.fta.FTAnet
+      class_path: net.eff_fta.FTAnet
       init_args:
         freq_bin: 1025
         time_segment: 130

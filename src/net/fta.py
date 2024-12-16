@@ -9,7 +9,7 @@ class SF_Module(nn.Module):
         super(SF_Module, self).__init__()
         # Fuse Layer
         self.f_avg = nn.AdaptiveAvgPool2d((1, 1))
-        self.f_bn = nn.BatchNorm1d(n_channel)
+        # self.f_bn = nn.BatchNorm1d(n_channel)
         self.f_linear = nn.Sequential(
             nn.Linear(n_channel, max(n_channel // reduction, limitation)), nn.SiLU()
         )
@@ -34,7 +34,7 @@ class SF_Module(nn.Module):
         # [bs, c, h, w]
         fused = self.f_avg(fused)  # bs,c,1,1
         fused = fused.view(fused.shape[0], fused.shape[1])
-        fused = self.f_bn(fused)
+        # fused = self.f_bn(fused)
         fused = self.f_linear(fused)
 
         masks = []
@@ -64,7 +64,7 @@ class SF_Module(nn.Module):
 class FTA_Module(nn.Module):
     def __init__(self, shape, kt, kf):
         super(FTA_Module, self).__init__()
-        self.bn = nn.BatchNorm2d(shape[2])
+        # self.bn = nn.BatchNorm2d(shape[2])
         self.r_cn = nn.Sequential(nn.Conv2d(shape[2], shape[3], (1, 1)), nn.SiLU())
         self.ta_cn1 = nn.Sequential(
             nn.Conv1d(shape[2], shape[3], kt, padding=(kt - 1) // 2), nn.SiLU()
@@ -93,7 +93,7 @@ class FTA_Module(nn.Module):
         )
 
     def forward(self, x):
-        x = self.bn(x)
+        # x = self.bn(x)
         x_r = self.r_cn(x)
 
         a_t = torch.mean(x, dim=-2)
@@ -120,18 +120,18 @@ class FTA_Module(nn.Module):
 class FTAnet(nn.Module):
     def __init__(self, freq_bin=360, time_segment=128):
         super(FTAnet, self).__init__()
-        self.bn_layer = nn.BatchNorm2d(1)
+        # self.bn_layer = nn.BatchNorm2d(1)
         # bm
-        self.bm_layer = nn.Sequential(
-            nn.Conv2d(1, 16, (4, 1), stride=(4, 1)),
-            nn.SiLU(),
-            nn.Conv2d(16, 16, (4, 1), stride=(4, 1)),
-            nn.SiLU(),
-            nn.Conv2d(16, 16, (4, 1), stride=(4, 1)),
-            nn.SiLU(),
-            nn.Conv2d(16, 1, (5, 1), stride=(5, 1)),
-            nn.SiLU(),
-        )
+        # self.bm_layer = nn.Sequential(
+        #     nn.Conv2d(1, 16, (4, 1), stride=(4, 1)),
+        #     nn.SiLU(),
+        #     nn.Conv2d(16, 16, (4, 1), stride=(4, 1)),
+        #     nn.SiLU(),
+        #     nn.Conv2d(16, 16, (4, 1), stride=(4, 1)),
+        #     nn.SiLU(),
+        #     nn.Conv2d(16, 1, (5, 1), stride=(5, 1)),
+        #     nn.SiLU(),
+        # )
 
         # fta_module
         self.fta_1 = FTA_Module((freq_bin, time_segment, 1, 32), 3, 3)
@@ -158,7 +158,7 @@ class FTAnet(nn.Module):
         # self.up_2 = nn.Upsample(scale_factor=2)
 
         self.head = nn.Sequential(
-            SamePadConv2d(256, 1280, kernel_size=1),
+            nn.Conv2d(256, 1280, kernel_size=1),
             nn.BatchNorm2d(1280),
             nn.SiLU(),
         )
@@ -170,9 +170,9 @@ class FTAnet(nn.Module):
         )
 
     def forward(self, x):
-        x = self.bn_layer(x)
-        bm = x
-        bm = self.bm_layer(bm)
+        # x = self.bn_layer(x)
+        # bm = x
+        # bm = self.bm_layer(bm)
 
         x_r, x_t, x_f = self.fta_1(x)
         x = self.sf_1([x_r, x_t, x_f])

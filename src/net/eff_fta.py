@@ -6,7 +6,7 @@ class SF_Module(nn.Module):
         super(SF_Module, self).__init__()
         # Fuse Layer
         self.f_avg = nn.AdaptiveAvgPool2d((1, 1))
-        self.f_bn = nn.BatchNorm1d(n_channel)
+        # self.f_bn = nn.BatchNorm1d(n_channel)
         self.f_linear = nn.Sequential(
             nn.Linear(n_channel, max(n_channel // reduction, limitation)), nn.SELU()
         )
@@ -29,7 +29,7 @@ class SF_Module(nn.Module):
         # [bs, c, h, w]
         fused = self.f_avg(fused)  # bs,c,1,1
         fused = fused.view(fused.shape[0], fused.shape[1])
-        fused = self.f_bn(fused)
+        # fused = self.f_bn(fused)
         fused = self.f_linear(fused)
 
         masks = []
@@ -54,36 +54,18 @@ class SF_Module(nn.Module):
 class FTA_Module(nn.Module):
     def __init__(self, shape, kt, kf):
         super(FTA_Module, self).__init__()
-        self.bn = nn.BatchNorm2d(shape[2])
-        self.r_cn = nn.Sequential(nn.Conv2d(shape[2], shape[3], (1, 1)), nn.ReLU())
-        self.ta_cn1 = nn.Sequential(
-            nn.Conv1d(shape[2], shape[3], kt, padding=(kt - 1) // 2), nn.SELU()
-        )
-        self.ta_cn2 = nn.Sequential(
-            nn.Conv1d(shape[3], shape[3], kt, padding=(kt - 1) // 2), nn.SELU()
-        )
-        self.ta_cn3 = nn.Sequential(
-            nn.Conv2d(shape[2], shape[3], 3, padding=1), nn.SELU()
-        )
-        self.ta_cn4 = nn.Sequential(
-            nn.Conv2d(shape[3], shape[3], 5, padding=2), nn.SELU()
-        )
+        self.r_cn = MBConvBlock(shape[2], 1, shape[3], 1, 1, True)
+        self.ta_cn1 = MBConv1DBlock(shape[2], 1, shape[3], kt, 1, True)
+        self.ta_cn2 = MBConv1DBlock(shape[3], 1, shape[3], kt, 1, True)
+        self.ta_cn3 = MBConvBlock(shape[2], 1, shape[3], 3, 1, True)
+        self.ta_cn4 = MBConvBlock(shape[3], 1, shape[3], 5, 1, True)
 
-        self.fa_cn1 = nn.Sequential(
-            nn.Conv1d(shape[2], shape[3], kf, padding=(kf - 1) // 2), nn.SELU()
-        )
-        self.fa_cn2 = nn.Sequential(
-            nn.Conv1d(shape[3], shape[3], kf, padding=(kf - 1) // 2), nn.SELU()
-        )
-        self.fa_cn3 = nn.Sequential(
-            nn.Conv2d(shape[2], shape[3], 3, padding=1), nn.SELU()
-        )
-        self.fa_cn4 = nn.Sequential(
-            nn.Conv2d(shape[3], shape[3], 5, padding=2), nn.SELU()
-        )
+        self.fa_cn1 = MBConv1DBlock(shape[2], 1, shape[3], kf, 1, True)
+        self.fa_cn2 = MBConv1DBlock(shape[3], 1, shape[3], kf, 1, True)
+        self.fa_cn3 = MBConvBlock(shape[2], 1, shape[3], 3, 1, True)
+        self.fa_cn4 = MBConvBlock(shape[3], 1, shape[3], 5, 1, True)
 
     def forward(self, x):
-        x = self.bn(x)
         x_r = self.r_cn(x)
 
         a_t = torch.mean(x, dim=-2)
@@ -110,18 +92,6 @@ class FTA_Module(nn.Module):
 class FTAnet(nn.Module):
     def __init__(self, freq_bin=360, time_segment=128):
         super(FTAnet, self).__init__()
-        self.bn_layer = nn.BatchNorm2d(1)
-        # bm
-        self.bm_layer = nn.Sequential(
-            nn.Conv2d(1, 16, (4, 1), stride=(4, 1)),
-            nn.SELU(),
-            nn.Conv2d(16, 16, (4, 1), stride=(4, 1)),
-            nn.SELU(),
-            nn.Conv2d(16, 16, (4, 1), stride=(4, 1)),
-            nn.SELU(),
-            nn.Conv2d(16, 1, (5, 1), stride=(5, 1)),
-            nn.SELU(),
-        )
 
         # fta_module
         self.fta_1 = FTA_Module((freq_bin, time_segment, 1, 32), 3, 3)
@@ -148,7 +118,7 @@ class FTAnet(nn.Module):
         # self.up_2 = nn.Upsample(scale_factor=2)
 
         self.head = nn.Sequential(
-            SamePadConv2d(256, 1280, kernel_size=1),
+            nn.Conv2d(256, 1280, kernel_size=1),
             nn.BatchNorm2d(1280),
             nn.SELU(),
         )
@@ -160,10 +130,6 @@ class FTAnet(nn.Module):
         )
 
     def forward(self, x):
-        x = self.bn_layer(x)
-        bm = x
-        bm = self.bm_layer(bm)
-
         x_r, x_t, x_f = self.fta_1(x)
         x = self.sf_1([x_r, x_t, x_f])
         x = self.mp_1(x)
@@ -178,84 +144,10 @@ class FTAnet(nn.Module):
         x_r, x_t, x_f = self.fta_4(x)
         x = self.sf_4([x_r, x_t, x_f])
 
-        # x = self.up_1(x)
-        # x_r, x_t, x_f = self.fta_5(x)
-        # x = self.sf_5([x_r, x_t, x_f])
-        # x = self.up_2(x)
-        # x_r, x_t, x_f = self.fta_6(x)
-        # x = self.sf_6([x_r, x_t, x_f])
-
-        # x_r, x_t, x_f = self.fta_7(x)
-        # x = self.sf_7([x_r, x_t, x_f])
-
-        # output_pre = torch.cat([bm, x], dim=2)
-        # output = nn.Softmax(dim=-2)(output_pre)
         out = self.head(x)
         out = self.classifier(out)
 
         return out
-        # return output, output_pre
-
-
-class SamePadConv2d(nn.Conv2d):
-    """
-    Conv with TF padding='same'
-    https://github.com/pytorch/pytorch/issues/3867#issuecomment-349279036
-    It means if we have kernel_size=5 and we want to leave conv output
-    be the same size as input we need to define how many pads should we have.
-    In TF we have option padding='same' but in Pytorch we need to provide
-    number of paddings. So we class is analog of TF padding='same'.
-    As you can see we don't have `padding` as input to this class, since
-    it we be calc automaticaly.
-    """
-
-    def __init__(
-        self,
-        inp,
-        oup,
-        kernel_size,
-        stride=1,
-        dilation=1,
-        groups=1,
-        bias=True,
-        padding_mode="zeros",
-    ):
-        super().__init__(
-            inp, oup, kernel_size, stride, 0, dilation, groups, bias, padding_mode
-        )
-
-    def get_pad_odd(self, in_, weight, stride, dilation):
-        effective_filter_size_rows = (weight - 1) * dilation + 1
-        out_rows = (in_ + stride - 1) // stride
-        padding_needed = max(
-            0, (out_rows - 1) * stride + effective_filter_size_rows - in_
-        )
-        padding_rows = max(
-            0, (out_rows - 1) * stride + (weight - 1) * dilation + 1 - in_
-        )
-        rows_odd = padding_rows % 2 != 0
-        return padding_rows, rows_odd
-
-    def forward(self, x):
-        padding_rows, rows_odd = self.get_pad_odd(
-            x.shape[2], self.weight.shape[2], self.stride[0], self.dilation[0]
-        )
-        padding_cols, cols_odd = self.get_pad_odd(
-            x.shape[3], self.weight.shape[3], self.stride[1], self.dilation[1]
-        )
-
-        if rows_odd or cols_odd:
-            x = F.pad(x, [0, int(cols_odd), 0, int(rows_odd)])
-
-        return F.conv2d(
-            x,
-            self.weight,
-            self.bias,
-            self.stride,
-            padding=(padding_rows // 2, padding_cols // 2),
-            dilation=self.dilation,
-            groups=self.groups,
-        )
 
 
 class MBConvBlock(nn.Module):
@@ -272,74 +164,80 @@ class MBConvBlock(nn.Module):
         [3] https://arxiv.org/abs/1905.02244 (MobileNet v3)
     """
 
-    def __init__(self, block_args, global_params, image_size=None):
+    def __init__(
+        self,
+        in_channels,
+        expand_ratio,
+        out_channels,
+        kernel_size,
+        # padding,
+        stride,
+        id_skip=False,
+        image_size=None,
+    ):
         super().__init__()
-        self._block_args = block_args
-        self._bn_mom = (
-            1 - global_params.batch_norm_momentum
-        )  # pytorch's difference from tensorflow
-        self._bn_eps = global_params.batch_norm_epsilon
-        self.has_se = (self._block_args.se_ratio is not None) and (
-            0 < self._block_args.se_ratio <= 1
-        )
-        self.id_skip = (
-            block_args.id_skip
-        )  # whether to use skip connection and drop connect
 
         # Expansion phase (Inverted Bottleneck)
-        inp = self._block_args.input_filters  # number of input channels
-        oup = (
-            self._block_args.input_filters * self._block_args.expand_ratio
-        )  # number of output channels
-        if self._block_args.expand_ratio != 1:
-            Conv2d = get_same_padding_conv2d(image_size=image_size)
-            self._expand_conv = Conv2d(
+        self.expand_ratio = expand_ratio
+        self.id_skip = id_skip
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        # self.padding = padding
+        self.stride = stride
+        inp = in_channels
+        # inp = self._block_args.input_filters  # number of input channels
+        oup = inp * expand_ratio  # number of output channels
+        if expand_ratio != 1:
+            # Conv2d = get_same_padding_conv2d(image_size=image_size)
+            self._expand_conv = nn.Conv2d(
                 in_channels=inp, out_channels=oup, kernel_size=1, bias=False
             )
-            self._bn0 = nn.BatchNorm2d(
-                num_features=oup, momentum=self._bn_mom, eps=self._bn_eps
-            )
+            # self._bn0 = nn.BatchNorm2d(
+            #     num_features=oup, momentum=self._bn_mom, eps=self._bn_eps
+            # )
+            self._bn0 = nn.BatchNorm2d(num_features=oup)
             # image_size = calculate_output_image_size(image_size, 1) <-- this wouldn't modify image_size
 
         # Depthwise convolution phase
-        k = self._block_args.kernel_size
-        s = self._block_args.stride
-        Conv2d = get_same_padding_conv2d(image_size=image_size)
-        self._depthwise_conv = Conv2d(
+        k = kernel_size
+        s = stride
+        # p = padding
+        # Conv2d = get_same_padding_conv2d(image_size=image_size)
+        self._depthwise_conv = nn.Conv2d(
             in_channels=oup,
             out_channels=oup,
             groups=oup,  # groups makes it depthwise
             kernel_size=k,
             stride=s,
+            padding=(k - 1) // 2,
             bias=False,
         )
-        self._bn1 = nn.BatchNorm2d(
-            num_features=oup, momentum=self._bn_mom, eps=self._bn_eps
-        )
-        image_size = calculate_output_image_size(image_size, s)
+        self._bn1 = nn.BatchNorm2d(num_features=oup)
+        # image_size = calculate_output_image_size(image_size, s)
 
         # Squeeze and Excitation layer, if desired
-        if self.has_se:
-            Conv2d = get_same_padding_conv2d(image_size=(1, 1))
-            num_squeezed_channels = max(
-                1, int(self._block_args.input_filters * self._block_args.se_ratio)
-            )
-            self._se_reduce = Conv2d(
-                in_channels=oup, out_channels=num_squeezed_channels, kernel_size=1
-            )
-            self._se_expand = Conv2d(
-                in_channels=num_squeezed_channels, out_channels=oup, kernel_size=1
-            )
+        # if self.has_se:
+        #     Conv2d = get_same_padding_conv2d(image_size=(1, 1))
+        #     num_squeezed_channels = max(
+        #         1, int(self._block_args.input_filters * self._block_args.se_ratio)
+        #     )
+        #     self._se_reduce = Conv2d(
+        #         in_channels=oup, out_channels=num_squeezed_channels, kernel_size=1
+        #     )
+        #     self._se_expand = Conv2d(
+        #         in_channels=num_squeezed_channels, out_channels=oup, kernel_size=1
+        #     )
 
         # Pointwise convolution phase
-        final_oup = self._block_args.output_filters
-        Conv2d = get_same_padding_conv2d(image_size=image_size)
-        self._project_conv = Conv2d(
+        final_oup = out_channels
+        # Conv2d = get_same_padding_conv2d(image_size=image_size)
+        self._project_conv = nn.Conv2d(
             in_channels=oup, out_channels=final_oup, kernel_size=1, bias=False
         )
-        self._bn2 = nn.BatchNorm2d(
-            num_features=final_oup, momentum=self._bn_mom, eps=self._bn_eps
-        )
+        self._bn2 = nn.BatchNorm2d(num_features=final_oup)
+        # self._bn2 = nn.BatchNorm2d(
+        #     num_features=final_oup, momentum=self._bn_mom, eps=self._bn_eps
+        # )
         self._swish = MemoryEfficientSwish()
 
     def forward(self, inputs, drop_connect_rate=None):
@@ -355,7 +253,7 @@ class MBConvBlock(nn.Module):
 
         # Expansion and Depthwise Convolution
         x = inputs
-        if self._block_args.expand_ratio != 1:
+        if self.expand_ratio != 1:
             x = self._expand_conv(inputs)
             x = self._bn0(x)
             x = self._swish(x)
@@ -365,12 +263,12 @@ class MBConvBlock(nn.Module):
         x = self._swish(x)
 
         # Squeeze and Excitation
-        if self.has_se:
-            x_squeezed = F.adaptive_avg_pool2d(x, 1)
-            x_squeezed = self._se_reduce(x_squeezed)
-            x_squeezed = self._swish(x_squeezed)
-            x_squeezed = self._se_expand(x_squeezed)
-            x = torch.sigmoid(x_squeezed) * x
+        # if self.has_se:
+        #     x_squeezed = F.adaptive_avg_pool2d(x, 1)
+        #     x_squeezed = self._se_reduce(x_squeezed)
+        #     x_squeezed = self._swish(x_squeezed)
+        #     x_squeezed = self._se_expand(x_squeezed)
+        #     x = torch.sigmoid(x_squeezed) * x
 
         # Pointwise Convolution
         x = self._project_conv(x)
@@ -378,14 +276,10 @@ class MBConvBlock(nn.Module):
 
         # Skip connection and drop connect
         input_filters, output_filters = (
-            self._block_args.input_filters,
-            self._block_args.output_filters,
+            self.in_channels,
+            self.out_channels,
         )
-        if (
-            self.id_skip
-            and self._block_args.stride == 1
-            and input_filters == output_filters
-        ):
+        if self.id_skip and self.stride == 1 and input_filters == output_filters:
             # The combination of skip connection and drop connect brings about stochastic depth.
             if drop_connect_rate:
                 x = drop_connect(x, p=drop_connect_rate, training=self.training)
@@ -400,6 +294,163 @@ class MBConvBlock(nn.Module):
         """
         self._swish = MemoryEfficientSwish() if memory_efficient else Swish()
 
+
+class MBConv1DBlock(nn.Module):
+    """Mobile Inverted Residual Bottleneck Block.
+
+    Args:
+        block_args (namedtuple): BlockArgs, defined in utils.py.
+        global_params (namedtuple): GlobalParam, defined in utils.py.
+        image_size (tuple or list): [image_height, image_width].
+
+    References:
+        [1] https://arxiv.org/abs/1704.04861 (MobileNet v1)
+        [2] https://arxiv.org/abs/1801.04381 (MobileNet v2)
+        [3] https://arxiv.org/abs/1905.02244 (MobileNet v3)
+    """
+
+    def __init__(
+        self,
+        in_channels,
+        expand_ratio,
+        out_channels,
+        kernel_size,
+        # padding,
+        stride,
+        id_skip=False,
+        image_size=None,
+    ):
+        super().__init__()
+        # self._block_args = block_args
+        # self._bn_mom = (
+        #     1 - global_params.batch_norm_momentum
+        # )  # pytorch's difference from tensorflow
+        # self._bn_eps = global_params.batch_norm_epsilon
+        # self._bn_mom = 1 - 0.99
+        # self._bn_eps = 1e-3
+        # self.has_se = (self._block_args.se_ratio is not None) and (
+        #     0 < self._block_args.se_ratio <= 1
+        # )
+        # self.id_skip = (
+        #     block_args.id_skip
+        # )  # whether to use skip connection and drop connect
+
+        # Expansion phase (Inverted Bottleneck)
+        self.expand_ratio = expand_ratio
+        self.id_skip = id_skip
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        # self.padding = padding
+        self.stride = stride
+        inp = in_channels
+        # inp = self._block_args.input_filters  # number of input channels
+        oup = inp * expand_ratio  # number of output channels
+        if expand_ratio != 1:
+            # Conv2d = get_same_padding_conv2d(image_size=image_size)
+            self._expand_conv = nn.Conv1d(
+                in_channels=inp, out_channels=oup, kernel_size=1, bias=False
+            )
+            # self._bn0 = nn.BatchNorm2d(
+            #     num_features=oup, momentum=self._bn_mom, eps=self._bn_eps
+            # )
+            self._bn0 = nn.BatchNorm1d(num_features=oup)
+            # image_size = calculate_output_image_size(image_size, 1) <-- this wouldn't modify image_size
+
+        # Depthwise convolution phase
+        k = kernel_size
+        s = stride
+        # p = padding
+        # Conv2d = get_same_padding_conv2d(image_size=image_size)
+        self._depthwise_conv = nn.Conv1d(
+            in_channels=oup,
+            out_channels=oup,
+            groups=oup,  # groups makes it depthwise
+            kernel_size=k,
+            stride=s,
+            padding=(k - 1) // 2,
+            bias=False,
+        )
+        self._bn1 = nn.BatchNorm1d(num_features=oup)
+        # image_size = calculate_output_image_size(image_size, s)
+
+        # Squeeze and Excitation layer, if desired
+        # if self.has_se:
+        #     Conv2d = get_same_padding_conv2d(image_size=(1, 1))
+        #     num_squeezed_channels = max(
+        #         1, int(self._block_args.input_filters * self._block_args.se_ratio)
+        #     )
+        #     self._se_reduce = Conv2d(
+        #         in_channels=oup, out_channels=num_squeezed_channels, kernel_size=1
+        #     )
+        #     self._se_expand = Conv2d(
+        #         in_channels=num_squeezed_channels, out_channels=oup, kernel_size=1
+        #     )
+
+        # Pointwise convolution phase
+        final_oup = out_channels
+        # Conv2d = get_same_padding_conv2d(image_size=image_size)
+        self._project_conv = nn.Conv1d(
+            in_channels=oup, out_channels=final_oup, kernel_size=1, bias=False
+        )
+        self._bn2 = nn.BatchNorm1d(num_features=final_oup)
+        # self._bn2 = nn.BatchNorm2d(
+        #     num_features=final_oup, momentum=self._bn_mom, eps=self._bn_eps
+        # )
+        self._swish = MemoryEfficientSwish()
+
+    def forward(self, inputs, drop_connect_rate=None):
+        """MBConvBlock's forward function.
+
+        Args:
+            inputs (tensor): Input tensor.
+            drop_connect_rate (bool): Drop connect rate (float, between 0 and 1).
+
+        Returns:
+            Output of this block after processing.
+        """
+
+        # Expansion and Depthwise Convolution
+        x = inputs
+        if self.expand_ratio != 1:
+            x = self._expand_conv(inputs)
+            x = self._bn0(x)
+            x = self._swish(x)
+
+        x = self._depthwise_conv(x)
+        x = self._bn1(x)
+        x = self._swish(x)
+
+        # Squeeze and Excitation
+        # if self.has_se:
+        #     x_squeezed = F.adaptive_avg_pool2d(x, 1)
+        #     x_squeezed = self._se_reduce(x_squeezed)
+        #     x_squeezed = self._swish(x_squeezed)
+        #     x_squeezed = self._se_expand(x_squeezed)
+        #     x = torch.sigmoid(x_squeezed) * x
+
+        # Pointwise Convolution
+        x = self._project_conv(x)
+        x = self._bn2(x)
+
+        # Skip connection and drop connect
+        input_filters, output_filters = (
+            self.in_channels,
+            self.out_channels,
+        )
+        if self.id_skip and self.stride == 1 and input_filters == output_filters:
+            # The combination of skip connection and drop connect brings about stochastic depth.
+            if drop_connect_rate:
+                x = drop_connect(x, p=drop_connect_rate, training=self.training)
+            x = x + inputs  # skip connection
+        return x
+
+    def set_swish(self, memory_efficient=True):
+        """Sets swish function as memory efficient (for training) or standard (for export).
+
+        Args:
+            memory_efficient (bool): Whether to use memory-efficient version of swish.
+        """
+        self._swish = MemoryEfficientSwish() if memory_efficient else Swish()
 
 
 """utils.py - Helper functions for building the model and for loading model parameters.
